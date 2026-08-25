@@ -64,7 +64,13 @@ Select the MIDI key first. Then press a computer key or shortcut such as Ctrl+C.
 62 = ydotool key 29:1 46:1 46:0 29:0 # Ctrl+C
 ```
 
-Start `ydotoold` and give it access to `/dev/uinput` before you start MIDI Hook.
+Add your user to the `input` group so `ydotoold` can access `/dev/uinput`:
+
+```sh
+sudo usermod -aG input "$USER"
+```
+
+Log out and log in again after this command. Then start `ydotoold` before you start MIDI Hook.
 
 The app prints unmapped note numbers to help with configuration. It uses `/bin/sh -c` on Linux and macOS. It uses `cmd.exe /C` on Windows. Only use a config file you trust.
 
