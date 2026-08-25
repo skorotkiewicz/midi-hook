@@ -1,19 +1,17 @@
+mod keyboard;
 mod named_key_code;
 
-use crossterm::event::{self, Event, KeyCode as TerminalKeyCode, KeyEventKind};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-use evdev::{Device, EventSummary, KeyCode, enumerate};
+use keyboard::{capture_keyboard_action, choose_keyboard, run_held_key, run_shortcut};
 use midir::{Ignore, MidiInput};
 use named_key_code::parse_shortcut;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io::{self, ErrorKind, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
-use std::time::Duration;
 
 #[derive(Debug, PartialEq)]
 enum Action {
@@ -32,43 +30,6 @@ enum MidiTrigger {
 struct Config {
     device: Option<String>,
     actions: HashMap<MidiTrigger, Action>,
-}
-
-struct RawMode;
-
-impl RawMode {
-    fn enable() -> Result<Self, String> {
-        enable_raw_mode()
-            .map_err(|error| format!("could not enable raw terminal mode: {error}"))?;
-        Ok(Self)
-    }
-}
-
-impl Drop for RawMode {
-    fn drop(&mut self) {
-        let _ = disable_raw_mode();
-    }
-}
-
-#[derive(Default)]
-struct Capture {
-    active: HashSet<u16>,
-    events: Vec<(u16, i32)>,
-    started: bool,
-}
-
-impl Capture {
-    fn push(&mut self, code: u16, value: i32) -> bool {
-        match value {
-            1 if self.active.insert(code) => {
-                self.started = true;
-                self.events.push((code, 1));
-            }
-            0 if self.active.remove(&code) => self.events.push((code, 0)),
-            _ => {}
-        }
-        self.started && self.active.is_empty()
-    }
 }
 
 fn parse_midi_trigger(value: &str, line: usize) -> Result<MidiTrigger, String> {
@@ -282,95 +243,6 @@ fn choose_midi_port(
     }
 }
 
-fn choose_keyboard() -> Result<PathBuf, String> {
-    let keyboards: Vec<_> = enumerate()
-        .filter(|(_, device)| {
-            !device
-                .name()
-                .is_some_and(|name| name.to_ascii_lowercase().contains("ydotool"))
-                && device.supported_keys().is_some_and(|keys| {
-                    keys.contains(KeyCode::KEY_A)
-                        && keys.contains(KeyCode::KEY_ENTER)
-                        && keys.contains(KeyCode::KEY_SPACE)
-                })
-        })
-        .map(|(path, device)| {
-            let name = device.name().unwrap_or("unknown keyboard").to_owned();
-            (path, name)
-        })
-        .collect();
-    if keyboards.is_empty() {
-        return Err(
-            "no readable keyboards found in /dev/input; check input-group permissions".into(),
-        );
-    }
-    println!("Keyboards:");
-    for (index, (path, name)) in keyboards.iter().enumerate() {
-        println!("  {index}: {name} ({})", path.display());
-    }
-    loop {
-        let selection = prompt("Select keyboard: ")?;
-        if let Some((path, _)) = selection
-            .parse::<usize>()
-            .ok()
-            .and_then(|index| keyboards.get(index))
-        {
-            return Ok(path.clone());
-        }
-        eprintln!("Enter a number between 0 and {}", keyboards.len() - 1);
-    }
-}
-
-fn capture_keyboard_action(path: &Path) -> Result<Option<String>, String> {
-    let mut device = Device::open(path)
-        .map_err(|error| format!("could not open keyboard {}: {error}", path.display()))?;
-    device
-        .set_nonblocking(true)
-        .map_err(|error| format!("could not poll keyboard {}: {error}", path.display()))?;
-    println!("Hold the shortcut keys, then release them all. Press Esc to cancel.");
-    let _raw_mode = RawMode::enable()?;
-    let mut capture = Capture::default();
-    loop {
-        match device.fetch_events() {
-            Ok(events) => {
-                for input_event in events {
-                    if let EventSummary::Key(_, key, value) = input_event.destructure()
-                        && capture.push(key.code(), value)
-                    {
-                        let pressed: HashSet<_> = capture
-                            .events
-                            .iter()
-                            .filter_map(|(code, value)| (*value == 1).then_some(*code))
-                            .collect();
-                        if pressed.len() == 1 {
-                            let code = pressed.into_iter().next().unwrap();
-                            return Ok(Some(format!("key {code}")));
-                        }
-                        let events = capture
-                            .events
-                            .iter()
-                            .map(|(code, value)| format!("{code}:{value}"))
-                            .collect::<Vec<_>>()
-                            .join(" ");
-                        return Ok(Some(format!("shortcut {events}")));
-                    }
-                }
-            }
-            Err(error) if error.kind() == ErrorKind::WouldBlock => {}
-            Err(error) => return Err(error.to_string()),
-        }
-        if event::poll(Duration::from_millis(20)).map_err(|error| error.to_string())?
-            && matches!(
-                event::read().map_err(|error| error.to_string())?,
-                Event::Key(key)
-                    if key.kind == KeyEventKind::Press && key.code == TerminalKeyCode::Esc
-            )
-        {
-            return Ok(None);
-        }
-    }
-}
-
 fn read_config(path: &Path) -> Result<String, String> {
     match fs::read_to_string(path) {
         Ok(text) => Ok(text),
@@ -474,38 +346,6 @@ fn run_command(command: String) {
         Ok(status) if !status.success() => eprintln!("command failed ({status}): {command}"),
         Err(error) => eprintln!("could not run command: {error}"),
         _ => {}
-    });
-}
-
-fn run_ydotool(events: Vec<String>) -> Result<(), String> {
-    match Command::new("ydotool")
-        .arg("key")
-        .args(&events)
-        .stdin(Stdio::null())
-        .status()
-    {
-        Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(format!(
-            "ydotool failed ({status}): key {}",
-            events.join(" ")
-        )),
-        Err(error) => Err(format!("could not run ydotool: {error}")),
-    }
-}
-
-fn run_held_key(code: u16, pressed: bool) -> Result<(), String> {
-    run_ydotool(vec![format!("{code}:{}", u8::from(pressed))])
-}
-
-fn run_shortcut(events: &[(u16, i32)]) {
-    let events = events
-        .iter()
-        .map(|(code, value)| format!("{code}:{value}"))
-        .collect();
-    thread::spawn(move || {
-        if let Err(error) = run_ydotool(events) {
-            eprintln!("{error}");
-        }
     });
 }
 
@@ -708,12 +548,13 @@ mod tests {
 
     #[test]
     fn captures_and_parses_all_actions() {
-        let mut capture = Capture::default();
+        let mut capture = keyboard::Capture::default();
         assert!(!capture.push(57, 1));
         assert!(!capture.push(35, 1));
         assert!(!capture.push(35, 0));
         assert!(capture.push(57, 0));
         assert_eq!(capture.events, vec![(57, 1), (35, 1), (35, 0), (57, 0)]);
+        assert_eq!(capture.action(), "shortcut 57:1 35:1 35:0 57:0");
 
         let config = parse_config(
             "device = test\n60 = shortcut 57:1 35:1 35:0 57:0\n61 = key 29\n62 = command echo hi\n62+60+61 = command combo\n48>50>52 = command sequence",
@@ -739,20 +580,17 @@ mod tests {
             config.actions[&MidiTrigger::Sequence(vec![48, 50, 52])],
             Action::Command("sequence".into())
         );
+        let codes: Vec<_> = ["ctrl", "space", "f4", "c"]
+            .into_iter()
+            .map(|name| keyboard::named_key_code(name).unwrap())
+            .collect();
+        let mut expected: Vec<_> = codes.iter().map(|code| (*code, 1)).collect();
+        expected.extend(codes.iter().rev().map(|code| (*code, 0)));
         assert_eq!(
             parse_config("60 = shortcut ctrl+space+f4+c")
                 .unwrap()
                 .actions[&MidiTrigger::Chord(vec![60])],
-            Action::Shortcut(vec![
-                (29, 1),
-                (57, 1),
-                (62, 1),
-                (46, 1),
-                (46, 0),
-                (62, 0),
-                (57, 0),
-                (29, 0),
-            ])
+            Action::Shortcut(expected)
         );
         let held = HashSet::from([60, 61, 62]);
         assert!(chord_active(&[60, 61, 62], &held));

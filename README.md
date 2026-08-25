@@ -2,9 +2,11 @@
 
 # MIDI Hook
 
-Map MIDI notes to physical keyboard shortcuts, held keys, or shell commands on Linux.
+Map MIDI notes to physical keyboard shortcuts, held keys, or shell commands on Linux, Windows, and macOS.
 
-## Permissions
+## Platform setup
+
+### Linux
 
 Setup reads the keyboard from `/dev/input`. Add your user to the `input` group, then log out and back in:
 
@@ -14,13 +16,21 @@ sudo usermod -aG input "$USER"
 
 Keyboard playback requires `ydotoold`.
 
+### Windows
+
+No extra keyboard software is required. MIDI Hook uses the native `SendInput` API.
+
+### macOS
+
+Grant your terminal or MIDI Hook Input Monitoring permission for capture and Accessibility permission for keyboard playback in System Settings → Privacy & Security.
+
 ## Setup
 
 ```sh
 cargo run --release -- setup
 ```
 
-Select a MIDI input and physical keyboard. Hold one or more MIDI notes, release them all, then choose whether multiple notes are an unordered chord or ordered sequence. Next choose:
+Select a MIDI input and, on Linux, a physical keyboard. Hold one or more MIDI notes, release them all, then choose whether multiple notes are an unordered chord or ordered sequence. Next choose:
 
 ```text
 s  Press and release a physical shortcut
@@ -54,4 +64,4 @@ device = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
 
 A `+`-separated MIDI trigger runs once when all listed MIDI notes are held. It re-arms when any required note is released. A `>`-separated trigger requires note-on events in exactly that order; a wrong note resets progress. Sequences have no timeout. Single-note mappings still run independently.
 
-Manual keyboard shortcuts can use `+`-separated key names. Captured shortcuts store exact Linux input event codes and values. `key` stores one Linux input code. `command` runs through `/bin/sh -c`. Only use configuration files you trust.
+Manual keyboard shortcuts can use `+`-separated key names. Captured shortcuts and `key` actions store native key codes, so numeric mappings are not portable between operating systems. Commands run through `/bin/sh -c` on Linux/macOS and `cmd.exe /C` on Windows. Only use configuration files you trust.
