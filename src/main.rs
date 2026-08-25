@@ -369,6 +369,17 @@ fn advance_sequence(notes: &[u8], position: &mut usize, note: u8) -> bool {
     }
 }
 
+fn sequence_note_set(notes: &[u8]) -> Vec<u8> {
+    let mut notes = notes.to_vec();
+    notes.sort_unstable();
+    notes.dedup();
+    notes
+}
+
+fn sequence_takes_priority(chord: &[u8], completed_sequences: &[Vec<u8>]) -> bool {
+    completed_sequences.iter().any(|sequence| sequence == chord)
+}
+
 fn trigger_notes(trigger: &MidiTrigger) -> &[u8] {
     match trigger {
         MidiTrigger::Chord(notes) | MidiTrigger::Sequence(notes) => notes,
@@ -432,6 +443,7 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                     held_notes.remove(&note);
                 }
 
+                let mut completed_sequences = Vec::new();
                 if pressed {
                     for (trigger, action) in &actions {
                         let MidiTrigger::Sequence(notes) = trigger else {
@@ -439,6 +451,7 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                         };
                         let position = sequence_positions.entry(trigger.clone()).or_insert(0);
                         if advance_sequence(notes, position, note) {
+                            completed_sequences.push(sequence_note_set(notes));
                             let label = trigger_label(trigger);
                             match action {
                                 Action::Command(command) => {
@@ -467,6 +480,9 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                     let label = trigger_label(trigger);
                     if now_active {
                         active_triggers.insert(trigger.clone());
+                        if sequence_takes_priority(notes, &completed_sequences) {
+                            continue;
+                        }
                         match action {
                             Action::Command(command) => {
                                 println!("notes {label}: command {command}");
@@ -617,6 +633,9 @@ mod tests {
         assert!(!advance_sequence(&[48, 50, 52], &mut position, 48));
         assert!(!advance_sequence(&[48, 50, 52], &mut position, 50));
         assert!(advance_sequence(&[48, 50, 52], &mut position, 52));
+        let completed = vec![sequence_note_set(&[93, 94, 95])];
+        assert!(sequence_takes_priority(&[93, 94, 95], &completed));
+        assert!(!sequence_takes_priority(&[93, 94], &completed));
 
         let (sender, receiver) = mpsc::channel();
         for event in [(61, true), (60, true), (60, false), (61, false)] {
