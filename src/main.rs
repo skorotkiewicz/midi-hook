@@ -262,7 +262,7 @@ fn midi_note(message: &[u8]) -> Option<(u8, bool)> {
 
 fn midi_control(message: &[u8]) -> Option<(u8, u8)> {
     (message.len() >= 3 && message[1] <= 127 && message[2] <= 127 && message[0] & 0xf0 == 0xb0)
-        .then_some((message[1], message[2]))
+        .then(|| (message[1], message[2]))
 }
 
 fn midi_pitch(message: &[u8]) -> Option<u16> {
@@ -1134,6 +1134,8 @@ mod tests {
             "volume 100"
         );
         assert_eq!(expand_value_command("volume {percent}", 0, 127), "volume 0");
+        assert_eq!(midi_control(&[0xc0, 0x01]), None);
+        assert_eq!(midi_control(&[0xf8]), None);
         assert_eq!(midi_pitch(&[0xe0, 0x00, 0x40]), Some(8192));
         assert_eq!(midi_pitch(&[0xe0, 0x7f, 0x7f]), Some(16_383));
         assert_eq!(
