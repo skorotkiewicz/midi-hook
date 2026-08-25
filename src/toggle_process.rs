@@ -75,6 +75,40 @@ impl ToggleProcess {
     }
 
     #[cfg(unix)]
+    pub(super) fn is_running(&mut self) -> Result<bool, String> {
+        self.child.try_wait().map_err(|error| error.to_string())?;
+        Ok(process_group_exists(self.process_group))
+    }
+
+    #[cfg(windows)]
+    pub(super) fn is_running(&mut self) -> Result<bool, String> {
+        use std::mem::{size_of, zeroed};
+        use windows_sys::Win32::System::JobObjects::{
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation,
+            QueryInformationJobObject,
+        };
+
+        self.child.try_wait().map_err(|error| error.to_string())?;
+        let mut information: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
+        if unsafe {
+            QueryInformationJobObject(
+                self.job,
+                JobObjectBasicAccountingInformation,
+                &mut information as *mut _ as *mut _,
+                size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(format!(
+                "could not query Windows Job Object: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(information.ActiveProcesses > 0)
+    }
+
+    #[cfg(unix)]
     pub(super) fn stop(mut self) -> Result<(), String> {
         use std::time::{Duration, Instant};
 
@@ -148,11 +182,41 @@ mod tests {
         assert!(!process_group_exists(process_group));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn recognizes_exited_unix_process() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "true"]);
+        let mut process = ToggleProcess::spawn(command).unwrap();
+        for _ in 0..100 {
+            if !process.is_running().unwrap() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("process did not exit");
+    }
+
     #[cfg(windows)]
     #[test]
     fn stops_windows_job() {
         let mut command = Command::new("cmd.exe");
         command.args(["/C", "ping -n 30 127.0.0.1 >NUL"]);
         ToggleProcess::spawn(command).unwrap().stop().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn recognizes_exited_windows_process() {
+        let mut command = Command::new("cmd.exe");
+        command.args(["/C", "exit 0"]);
+        let mut process = ToggleProcess::spawn(command).unwrap();
+        for _ in 0..100 {
+            if !process.is_running().unwrap() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("process did not exit");
     }
 }

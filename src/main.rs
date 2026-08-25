@@ -532,13 +532,22 @@ fn toggle_command(
     trigger: &MidiTrigger,
     command: &str,
 ) {
-    if let Some(process) = running.remove(trigger) {
-        if let Err(error) = process.stop() {
-            eprintln!("could not stop toggle command: {error}");
-        } else {
-            println!("stopped toggle: {command}");
+    if let Some(mut process) = running.remove(trigger) {
+        match process.is_running() {
+            Ok(true) => {
+                if let Err(error) = process.stop() {
+                    eprintln!("could not stop toggle command: {error}");
+                } else {
+                    println!("stopped toggle: {command}");
+                }
+                return;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("could not check toggle command: {error}");
+                return;
+            }
         }
-        return;
     }
     match ToggleProcess::spawn(shell_command(command)) {
         Ok(process) => {
