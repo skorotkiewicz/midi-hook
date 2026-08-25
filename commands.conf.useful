@@ -1,0 +1,41 @@
+device = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
+
+# USEFUL: desktop and media controls
+36 = command notify-send "MIDI Hook" "Hello from note 36 🎹"
+37 = command wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
+38 = command wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
+39 = command wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+40 = command playerctl previous
+41 = command playerctl play-pause
+42 = command playerctl next
+43 = shortcut ctrl+alt+t
+44 = shortcut super+d
+45 = command loginctl lock-session
+
+# SCREENSHOT: uses grim on Wayland or gnome-screenshot as a fallback
+46 = command mkdir -p "$HOME/Pictures"; file="$HOME/Pictures/midi-$(date +%Y%m%d-%H%M%S).png"; if command -v grim >/dev/null; then grim "$file"; elif command -v gnome-screenshot >/dev/null; then gnome-screenshot -f "$file"; else notify-send "Screenshot" "Install grim or gnome-screenshot"; fi
+
+# HOLD: Linux key code 42 is Left Shift; release the MIDI note to release Shift
+47 = key 42
+
+# CHORD versus ORDER: valid order wins; another held order triggers the chord
+60>64>67 = command notify-send "Arpeggio unlocked" "C → E → G, excellent form"
+60+64+67 = command notify-send "C major chord" "Same notes, any other order"
+
+# A tiny success melody; requires the beep command
+69>71>72 = command for frequency in 523 659 784 1047; do beep -f "$frequency" -l 120; done
+
+# FUNNY: ask GNU shuf for extremely reliable musical advice
+76 = command notify-send "MIDI wisdom" "$(printf '%s\n' 'Add more cowbell.' 'Try turning the chord off and on again.' 'That wrong note was jazz.' 'The tempo is fine; spacetime is drifting.' | shuf -n1)"
+
+# FUNNY: dramatic alert chord
+77+81+84 = command notify-send -u critical "BOSS BATTLE" "Spreadsheet has entered its second phase."
+
+# SECRET: deliberate ordered sequence opens the classic emergency soundtrack
+80>82>84>85 = command xdg-open 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+
+# OPTIONAL: copy the current timestamp under Wayland; requires wl-copy
+88 = command date --iso-8601=seconds | wl-copy; notify-send "Clipboard" "Current timestamp copied"
+
+# OPTIONAL: speak a compliment; tries spd-say, then falls back to a notification
+89 = command if command -v spd-say >/dev/null; then spd-say 'Your MIDI mapping is magnificent'; else notify-send "Compliment" "Your MIDI mapping is magnificent ✨"; fi
