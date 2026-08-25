@@ -11,6 +11,9 @@ output = Your MIDI output name
 # Shell command
 62 = command notify-send "MIDI note 62"
 
+# Start on the first trigger, stop on the next
+63 = toggle spotify
+
 # Pedal: values 1-127 activate, value 0 releases
 cc 64 = key 29
 

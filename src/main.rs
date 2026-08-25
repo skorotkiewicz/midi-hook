@@ -15,7 +15,7 @@ use std::env;
 use std::fs;
 use std::io::{self, ErrorKind, Write};
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, PartialEq)]
 enum Action {
     Command(String),
+    Toggle(String),
     HeldKey(u16),
     Shortcut(Vec<(u16, i32)>),
 }
@@ -114,6 +115,11 @@ fn parse_config(text: &str) -> Result<Config, String> {
                 return Err(format!("line {line_number}: command is empty"));
             }
             Action::Command(command.to_owned())
+        } else if let Some(command) = value.strip_prefix("toggle ") {
+            if command.trim().is_empty() {
+                return Err(format!("line {line_number}: toggle command is empty"));
+            }
+            Action::Toggle(command.to_owned())
         } else if let Some(code) = value.strip_prefix("key ") {
             Action::HeldKey(
                 code.parse::<u16>()
@@ -123,7 +129,7 @@ fn parse_config(text: &str) -> Result<Config, String> {
             Action::Shortcut(parse_shortcut(events, line_number)?)
         } else {
             return Err(format!(
-                "line {line_number}: action must start with command, key, or shortcut"
+                "line {line_number}: action must start with command, toggle, key, or shortcut"
             ));
         };
         if matches!(trigger, MidiTrigger::Sequence(_)) && matches!(action, Action::HeldKey(_)) {
@@ -405,7 +411,11 @@ fn setup(path: &Path) -> Result<(), String> {
         };
         println!("Learned MIDI trigger {}.", trigger_label(&trigger));
         let action = loop {
-            match prompt("Action [s=press shortcut, t=type shortcut, c=type command]: ")?.as_str() {
+            match prompt(
+                "Action [s=press shortcut, t=type shortcut, c=command, g=toggle command]: ",
+            )?
+            .as_str()
+            {
                 "s" | "shortcut" => {
                     if let Some(shortcut) = capture_keyboard_action(&keyboard)? {
                         break shortcut;
@@ -425,7 +435,14 @@ fn setup(path: &Path) -> Result<(), String> {
                     }
                     eprintln!("Command cannot be empty");
                 }
-                _ => eprintln!("Enter s, t, or c"),
+                "g" | "toggle" => {
+                    let command = prompt("Toggle command: ")?;
+                    if !command.is_empty() {
+                        break format!("toggle {command}");
+                    }
+                    eprintln!("Command cannot be empty");
+                }
+                _ => eprintln!("Enter s, t, c, or g"),
             }
         };
         text = update_config(
@@ -459,6 +476,38 @@ fn run_command(command: String) {
         Err(error) => eprintln!("could not run command: {error}"),
         _ => {}
     });
+}
+
+fn toggle_command(running: &mut HashMap<MidiTrigger, Child>, trigger: &MidiTrigger, command: &str) {
+    if let Some(mut child) = running.remove(trigger) {
+        match child.try_wait() {
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                println!("stopped toggle: {command}");
+                return;
+            }
+            Ok(Some(_)) => {}
+            Err(error) => {
+                eprintln!("could not check toggle command: {error}");
+                return;
+            }
+        }
+    }
+    match shell_command(command).spawn() {
+        Ok(child) => {
+            running.insert(trigger.clone(), child);
+            println!("started toggle: {command}");
+        }
+        Err(error) => eprintln!("could not start toggle command: {error}"),
+    }
+}
+
+fn stop_toggle_commands(running: &mut HashMap<MidiTrigger, Child>) {
+    for (_, mut child) in running.drain() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 fn expand_cc_command(command: &str, value: u8) -> Option<String> {
@@ -578,7 +627,7 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                 output_codes.insert(*code);
             }
             Action::Shortcut(events) => output_codes.extend(events.iter().map(|(code, _)| *code)),
-            Action::Command(_) => {}
+            Action::Command(_) | Action::Toggle(_) => {}
         }
     }
     if !output_codes.is_empty() {
@@ -626,6 +675,7 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
         let mut active_triggers = HashSet::new();
         let mut active_controls = HashSet::new();
         let mut sequence_positions = HashMap::new();
+        let mut running_toggles = HashMap::new();
         let mut last_note = HashMap::new();
         'events: while let Ok(event) = midi_receiver.recv() {
             if let MidiInputEvent::Control(control, value) = event {
@@ -662,6 +712,9 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                         Action::Shortcut(events) => {
                             println!("cc {control}: shortcut");
                             run_shortcut(events);
+                        }
+                        Action::Toggle(command) => {
+                            toggle_command(&mut running_toggles, &trigger, command);
                         }
                         Action::Command(_) => unreachable!(),
                     }
@@ -713,6 +766,9 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                                 println!("notes {label}: shortcut");
                                 run_shortcut(events);
                             }
+                            Action::Toggle(command) => {
+                                toggle_command(&mut running_toggles, trigger, command);
+                            }
                             Action::HeldKey(_) => unreachable!(),
                         }
                     }
@@ -752,6 +808,9 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                             println!("notes {label}: shortcut");
                             run_shortcut(events);
                         }
+                        Action::Toggle(command) => {
+                            toggle_command(&mut running_toggles, trigger, command);
+                        }
                     }
                 } else {
                     active_triggers.remove(trigger);
@@ -775,6 +834,7 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                 println!("note {note}: unmapped");
             }
         }
+        stop_toggle_commands(&mut running_toggles);
     });
     let connection = input
         .connect(
@@ -880,7 +940,7 @@ mod tests {
         assert_eq!(capture.action(), "shortcut 57:1 35:1 35:0 57:0");
 
         let config = parse_config(
-            "device = test\noutput = lights\n60 = shortcut 57:1 35:1 35:0 57:0\n61 = key 29\n62 = command echo hi\n62+60+61 = command combo\n48>50>52 = command sequence\ncc 64 = key 42",
+            "device = test\noutput = lights\n60 = shortcut 57:1 35:1 35:0 57:0\n61 = key 29\n62 = command echo hi\n63 = toggle sleep 60\n62+60+61 = command combo\n48>50>52 = command sequence\ncc 64 = key 42",
         )
         .unwrap();
         assert_eq!(
@@ -894,6 +954,10 @@ mod tests {
         assert_eq!(
             config.actions[&MidiTrigger::Chord(vec![62])],
             Action::Command("echo hi".into())
+        );
+        assert_eq!(
+            config.actions[&MidiTrigger::Chord(vec![63])],
+            Action::Toggle("sleep 60".into())
         );
         assert_eq!(
             config.actions[&MidiTrigger::Chord(vec![60, 61, 62])],
@@ -990,5 +1054,16 @@ mod tests {
         assert_eq!(midi_control(&[0xb0, 64, 127]), Some((64, 127)));
         assert_eq!(midi_control(&[0xb0, 64, 0]), Some((64, 0)));
         assert!(parse_config("60 = shortcut 57:1").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn toggles_command_process() {
+        let trigger = MidiTrigger::Chord(vec![60]);
+        let mut running = HashMap::new();
+        toggle_command(&mut running, &trigger, "exec sleep 30");
+        assert!(running.contains_key(&trigger));
+        toggle_command(&mut running, &trigger, "exec sleep 30");
+        assert!(!running.contains_key(&trigger));
     }
 }

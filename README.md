@@ -82,6 +82,7 @@ output = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
 61 = shortcut ctrl+space+f4+c
 62 = key 29
 63 = command notify-send "MIDI note 63"
+64 = toggle spotify
 60+61+62 = command notify-send "MIDI chord pressed"
 48>50>52 = command notify-send "MIDI sequence entered"
 cc 64 = key 29
@@ -92,4 +93,4 @@ A `+`-separated MIDI trigger runs once when all listed MIDI notes are held. It r
 
 When `output` is configured, active note mappings send MIDI NoteOn feedback and send NoteOff when released. This can drive controller LEDs. Sequences and CC mappings do not send LED feedback.
 
-Manual keyboard shortcuts can use `+`-separated key names. Captured shortcuts and `key` actions store native key codes, so numeric mappings are not portable between operating systems. Commands run through `/bin/sh -c` on Linux/macOS and `cmd.exe /C` on Windows. Commands should terminate or detach themselves; MIDI Hook does not impose a timeout. Only use configuration files you trust.
+Manual keyboard shortcuts can use `+`-separated key names. Captured shortcuts and `key` actions store native key codes, so numeric mappings are not portable between operating systems. Commands run through `/bin/sh -c` on Linux/macOS and `cmd.exe /C` on Windows. Commands should terminate or detach themselves; MIDI Hook does not impose a timeout. A `toggle` action starts its command on the first trigger and stops it on the next. MIDI Hook also stops active toggle commands when it exits. Only use configuration files you trust.
