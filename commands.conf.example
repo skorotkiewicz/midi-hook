@@ -14,6 +14,11 @@ output = Your MIDI output name
 # Start on the first trigger, stop on the next
 63 = toggle spotify
 
+# Inclusive NoteOn velocity ranges
+65 [vel=1..49] = command notify-send "Soft press"
+65 [vel=50..99] = command notify-send "Middle press"
+65 [vel=100..127] = command notify-send "Hard press"
+
 # Pedal: values 1-127 activate, value 0 releases
 cc 64 = key 29
 

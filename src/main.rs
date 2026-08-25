@@ -31,9 +31,39 @@ enum Action {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum VelocityCondition {
+    GreaterThan(u8),
+    Range { start: u8, end: u8 },
+}
+
+impl VelocityCondition {
+    fn bounds(&self) -> (u8, u8) {
+        match self {
+            Self::GreaterThan(threshold) => (threshold + 1, 127),
+            Self::Range { start, end } => (*start, *end),
+        }
+    }
+
+    fn matches(&self, velocity: u8) -> bool {
+        let (start, end) = self.bounds();
+        (start..=end).contains(&velocity)
+    }
+
+    fn overlaps(&self, other: &Self) -> bool {
+        let (start, end) = self.bounds();
+        let (other_start, other_end) = other.bounds();
+        start <= other_end && other_start <= end
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum MidiTrigger {
     Chord(Vec<u8>),
     Sequence(Vec<u8>),
+    Velocity {
+        note: u8,
+        condition: VelocityCondition,
+    },
     Control(u8),
 }
 
@@ -53,6 +83,46 @@ fn parse_midi_trigger(value: &str, line: usize) -> Result<MidiTrigger, String> {
             .filter(|control| *control <= 127)
             .map(MidiTrigger::Control)
             .ok_or_else(|| format!("line {line}: MIDI control must be between 0 and 127"));
+    }
+    if let Some((note, condition)) = value.split_once(" [vel") {
+        let note = note
+            .trim()
+            .parse::<u8>()
+            .ok()
+            .filter(|note| *note <= 127)
+            .ok_or_else(|| format!("line {line}: MIDI note must be between 0 and 127"))?;
+        let condition = condition
+            .strip_suffix(']')
+            .ok_or_else(|| format!("line {line}: velocity condition must end with ]"))?;
+        let condition = if let Some(threshold) = condition.strip_prefix('>') {
+            let threshold = threshold
+                .parse::<u8>()
+                .ok()
+                .filter(|velocity| *velocity < 127)
+                .ok_or_else(|| {
+                    format!("line {line}: velocity threshold must be between 0 and 126")
+                })?;
+            VelocityCondition::GreaterThan(threshold)
+        } else if let Some((start, end)) = condition
+            .strip_prefix('=')
+            .and_then(|range| range.split_once(".."))
+        {
+            let start = start.parse::<u8>().ok().filter(|value| *value > 0);
+            let end = end.parse::<u8>().ok().filter(|value| *value <= 127);
+            match (start, end) {
+                (Some(start), Some(end)) if start <= end => VelocityCondition::Range { start, end },
+                _ => {
+                    return Err(format!(
+                        "line {line}: velocity range must be between 1 and 127 in ascending order"
+                    ));
+                }
+            }
+        } else {
+            return Err(format!(
+                "line {line}: expected velocity condition vel>N or vel=N..N"
+            ));
+        };
+        return Ok(MidiTrigger::Velocity { note, condition });
     }
     if value.contains('+') && value.contains('>') {
         return Err(format!("line {line}: MIDI trigger cannot mix + and >"));
@@ -92,7 +162,8 @@ fn parse_config(text: &str) -> Result<Config, String> {
             continue;
         }
         let (key, value) = line
-            .split_once('=')
+            .split_once(" = ")
+            .or_else(|| line.split_once('='))
             .ok_or_else(|| format!("line {line_number}: expected KEY = VALUE"))?;
         let key = key.trim();
         let value = value.trim();
@@ -139,6 +210,21 @@ fn parse_config(text: &str) -> Result<Config, String> {
                 "line {line_number}: ordered sequences cannot hold a key"
             ));
         }
+        if let MidiTrigger::Velocity { note, condition } = &trigger
+            && config.actions.keys().any(|existing| {
+                matches!(
+                    existing,
+                    MidiTrigger::Velocity {
+                        note: existing_note,
+                        condition: existing_condition,
+                    } if existing_note == note && existing_condition.overlaps(condition)
+                )
+            })
+        {
+            return Err(format!(
+                "line {line_number}: velocity condition overlaps another mapping for note {note}"
+            ));
+        }
         if config.actions.insert(trigger.clone(), action).is_some() {
             return Err(format!(
                 "line {line_number}: MIDI trigger {trigger:?} is already mapped"
@@ -163,7 +249,8 @@ fn update_config(
     let mut lines = Vec::new();
     for raw_line in text.lines() {
         let key = raw_line
-            .split_once('=')
+            .split_once(" = ")
+            .or_else(|| raw_line.split_once('='))
             .map(|(key, _)| key.trim())
             .unwrap_or("");
         if key == "device" {
@@ -193,15 +280,19 @@ fn update_config(
     Ok(lines.join("\n") + "\n")
 }
 
-fn midi_note(message: &[u8]) -> Option<(u8, bool)> {
+fn midi_note_velocity(message: &[u8]) -> Option<(u8, u8)> {
     if message.len() < 3 || message[1] > 127 || message[2] > 127 {
         return None;
     }
-    match (message[0] & 0xf0, message[2]) {
-        (0x90, 1..=127) => Some((message[1], true)),
-        (0x80, _) | (0x90, 0) => Some((message[1], false)),
+    match message[0] & 0xf0 {
+        0x90 => Some((message[1], message[2])),
+        0x80 => Some((message[1], 0)),
         _ => None,
     }
+}
+
+fn midi_note(message: &[u8]) -> Option<(u8, bool)> {
+    midi_note_velocity(message).map(|(note, velocity)| (note, velocity > 0))
 }
 
 fn midi_control(message: &[u8]) -> Option<(u8, u8)> {
@@ -217,7 +308,7 @@ enum MidiCapture {
 
 #[derive(Clone, Copy)]
 enum MidiInputEvent {
-    Note(u8, bool),
+    Note(u8, u8),
     Control(u8, u8),
 }
 
@@ -231,8 +322,8 @@ fn capture_midi_trigger(receiver: &mpsc::Receiver<MidiInputEvent>) -> Result<Mid
                 return Ok(MidiCapture::Control(control));
             }
             MidiInputEvent::Control(_, _) => {}
-            MidiInputEvent::Note(note, pressed) => {
-                if pressed {
+            MidiInputEvent::Note(note, velocity) => {
+                if velocity > 0 {
                     active.insert(note);
                     if seen.insert(note) {
                         captured.push(note);
@@ -376,8 +467,8 @@ fn setup(path: &Path) -> Result<(), String> {
             port,
             "midi-hook-setup",
             move |_, message, _| {
-                let event = midi_note(message)
-                    .map(|(note, pressed)| MidiInputEvent::Note(note, pressed))
+                let event = midi_note_velocity(message)
+                    .map(|(note, velocity)| MidiInputEvent::Note(note, velocity))
                     .or_else(|| {
                         midi_control(message)
                             .map(|(control, value)| MidiInputEvent::Control(control, value))
@@ -523,6 +614,10 @@ fn expand_cc_command(command: &str, value: u8) -> Option<String> {
     )
 }
 
+fn velocity_active(mapped_note: u8, condition: &VelocityCondition, note: u8, velocity: u8) -> bool {
+    mapped_note == note && condition.matches(velocity)
+}
+
 fn chord_active(notes: &[u8], held: &HashSet<u8>) -> bool {
     notes.iter().all(|note| held.contains(note))
 }
@@ -571,6 +666,7 @@ fn sequence_takes_priority(chord: &[u8], completed_sequences: &[Vec<u8>]) -> boo
 fn trigger_notes(trigger: &MidiTrigger) -> &[u8] {
     match trigger {
         MidiTrigger::Chord(notes) | MidiTrigger::Sequence(notes) => notes,
+        MidiTrigger::Velocity { note, .. } => std::slice::from_ref(note),
         MidiTrigger::Control(_) => &[],
     }
 }
@@ -587,6 +683,10 @@ fn trigger_label(trigger: &MidiTrigger) -> String {
     match trigger {
         MidiTrigger::Chord(notes) => note_numbers(notes, "+"),
         MidiTrigger::Sequence(notes) => note_numbers(notes, ">"),
+        MidiTrigger::Velocity { note, condition } => match condition {
+            VelocityCondition::GreaterThan(threshold) => format!("{note} [vel>{threshold}]"),
+            VelocityCondition::Range { start, end } => format!("{note} [vel={start}..{end}]"),
+        },
         MidiTrigger::Control(control) => format!("cc {control}"),
     }
 }
@@ -606,8 +706,12 @@ fn set_midi_feedback(
     trigger: &MidiTrigger,
     pressed: bool,
 ) {
-    if let MidiTrigger::Chord(notes) = trigger
-        && let Some(feedback) = feedback
+    let notes = match trigger {
+        MidiTrigger::Chord(notes) => notes.as_slice(),
+        MidiTrigger::Velocity { note, .. } => std::slice::from_ref(note),
+        _ => return,
+    };
+    if let Some(feedback) = feedback
         && let Ok(mut feedback) = feedback.lock()
     {
         feedback.set_notes(notes, pressed);
@@ -720,9 +824,10 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                 }
                 continue 'events;
             }
-            let MidiInputEvent::Note(note, pressed) = event else {
+            let MidiInputEvent::Note(note, velocity) = event else {
                 continue 'events;
             };
+            let pressed = velocity > 0;
             if pressed {
                 let now = Instant::now();
                 if last_note
@@ -765,10 +870,17 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
             }
 
             for (trigger, action) in &actions {
-                let MidiTrigger::Chord(notes) = trigger else {
-                    continue;
+                let (now_active, chord_notes) = match trigger {
+                    MidiTrigger::Chord(notes) => (chord_active(notes, &held_notes), Some(notes)),
+                    MidiTrigger::Velocity {
+                        note: mapped_note,
+                        condition,
+                    } if *mapped_note == note => (
+                        pressed && velocity_active(*mapped_note, condition, note, velocity),
+                        None,
+                    ),
+                    _ => continue,
                 };
-                let now_active = chord_active(notes, &held_notes);
                 let was_active = active_triggers.contains(trigger);
                 if now_active == was_active {
                     continue;
@@ -776,7 +888,9 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                 let label = trigger_label(trigger);
                 if now_active {
                     active_triggers.insert(trigger.clone());
-                    if sequence_takes_priority(notes, &completed_sequences) {
+                    if chord_notes
+                        .is_some_and(|notes| sequence_takes_priority(notes, &completed_sequences))
+                    {
                         continue;
                     }
                     set_midi_feedback(&callback_feedback, trigger, true);
@@ -830,8 +944,8 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
             port,
             "midi-hook",
             move |_, message, _| {
-                let event = midi_note(message)
-                    .map(|(note, pressed)| MidiInputEvent::Note(note, pressed))
+                let event = midi_note_velocity(message)
+                    .map(|(note, velocity)| MidiInputEvent::Note(note, velocity))
                     .or_else(|| {
                         midi_control(message)
                             .map(|(control, value)| MidiInputEvent::Control(control, value))
@@ -936,7 +1050,7 @@ mod tests {
         assert_eq!(capture.action(), "shortcut 57:1 35:1 35:0 57:0");
 
         let config = parse_config(
-            "device = test\noutput = lights\n60 = shortcut 57:1 35:1 35:0 57:0\n61 = key 29\n62 = command echo hi\n63 = toggle sleep 60\n62+60+61 = command combo\n48>50>52 = command sequence\ncc 64 = key 42",
+            "device = test\noutput = lights\n60 = shortcut 57:1 35:1 35:0 57:0\n61 = key 29\n62 = command echo hi\n63 = toggle sleep 60\n65 [vel>100] = command hard\n62+60+61 = command combo\n48>50>52 = command sequence\ncc 64 = key 42",
         )
         .unwrap();
         assert_eq!(
@@ -954,6 +1068,13 @@ mod tests {
         assert_eq!(
             config.actions[&MidiTrigger::Chord(vec![63])],
             Action::Toggle("sleep 60".into())
+        );
+        assert_eq!(
+            config.actions[&MidiTrigger::Velocity {
+                note: 65,
+                condition: VelocityCondition::GreaterThan(100),
+            }],
+            Action::Command("hard".into())
         );
         assert_eq!(
             config.actions[&MidiTrigger::Chord(vec![60, 61, 62])],
@@ -983,6 +1104,20 @@ mod tests {
         let held = HashSet::from([60, 61, 62]);
         assert!(chord_active(&[60, 61, 62], &held));
         assert!(!chord_active(&[60, 61, 63], &held));
+        let hard = VelocityCondition::GreaterThan(100);
+        assert!(!velocity_active(60, &hard, 60, 100));
+        assert!(velocity_active(60, &hard, 60, 101));
+        assert!(!velocity_active(60, &hard, 61, 127));
+        let soft = VelocityCondition::Range { start: 1, end: 49 };
+        assert!(velocity_active(60, &soft, 60, 1));
+        assert!(velocity_active(60, &soft, 60, 49));
+        assert!(!velocity_active(60, &soft, 60, 50));
+        assert!(soft.overlaps(&VelocityCondition::Range { start: 49, end: 70 }));
+        assert!(!soft.overlaps(&VelocityCondition::Range { start: 50, end: 70 }));
+        assert!(
+            parse_config("65 [vel=1..50] = command soft\n65 [vel=50..99] = command middle")
+                .is_err()
+        );
         let notes = [48, 50, 52];
         let failure = sequence_failure(&notes);
         let mut position = 0;
@@ -1018,7 +1153,9 @@ mod tests {
 
         let (sender, receiver) = mpsc::channel();
         for (note, pressed) in [(61, true), (60, true), (60, false), (61, false)] {
-            sender.send(MidiInputEvent::Note(note, pressed)).unwrap();
+            sender
+                .send(MidiInputEvent::Note(note, if pressed { 100 } else { 0 }))
+                .unwrap();
         }
         assert_eq!(
             capture_midi_trigger(&receiver).unwrap(),
