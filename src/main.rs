@@ -25,7 +25,7 @@ enum Action {
 #[derive(Default)]
 struct Config {
     device: Option<String>,
-    actions: HashMap<u8, Action>,
+    actions: HashMap<Vec<u8>, Action>,
 }
 
 struct RawMode;
@@ -65,6 +65,26 @@ impl Capture {
     }
 }
 
+fn parse_midi_trigger(value: &str, line: usize) -> Result<Vec<u8>, String> {
+    let mut notes = Vec::new();
+    for value in value.split('+') {
+        let note = value
+            .trim()
+            .parse::<u8>()
+            .ok()
+            .filter(|note| *note <= 127)
+            .ok_or_else(|| format!("line {line}: MIDI note must be between 0 and 127"))?;
+        notes.push(note);
+    }
+    notes.sort_unstable();
+    if notes.is_empty() || notes.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(format!(
+            "line {line}: MIDI trigger contains duplicate notes"
+        ));
+    }
+    Ok(notes)
+}
+
 fn parse_config(text: &str) -> Result<Config, String> {
     let mut config = Config::default();
     for (index, raw_line) in text.lines().enumerate() {
@@ -87,11 +107,7 @@ fn parse_config(text: &str) -> Result<Config, String> {
             }
             continue;
         }
-        let note = key
-            .parse::<u8>()
-            .ok()
-            .filter(|note| *note <= 127)
-            .ok_or_else(|| format!("line {line_number}: note must be between 0 and 127"))?;
+        let trigger = parse_midi_trigger(key, line_number)?;
         let action = if let Some(command) = value.strip_prefix("command ") {
             if command.trim().is_empty() {
                 return Err(format!("line {line_number}: command is empty"));
@@ -109,17 +125,20 @@ fn parse_config(text: &str) -> Result<Config, String> {
                 "line {line_number}: action must start with command, key, or shortcut"
             ));
         };
-        if config.actions.insert(note, action).is_some() {
-            return Err(format!("line {line_number}: note {note} is already mapped"));
+        if config.actions.insert(trigger.clone(), action).is_some() {
+            return Err(format!(
+                "line {line_number}: MIDI trigger {trigger:?} is already mapped"
+            ));
         }
     }
     Ok(config)
 }
 
-fn update_config(text: &str, device: &str, note: u8, action: &str) -> Result<String, String> {
+fn update_config(text: &str, device: &str, trigger: &[u8], action: &str) -> Result<String, String> {
     parse_config(text)?;
+    let trigger_text = trigger_label(trigger);
     let mut found_device = false;
-    let mut found_note = false;
+    let mut found_trigger = false;
     let mut lines = Vec::new();
     for raw_line in text.lines() {
         let key = raw_line
@@ -129,9 +148,9 @@ fn update_config(text: &str, device: &str, note: u8, action: &str) -> Result<Str
         if key == "device" {
             lines.push(format!("device = {device}"));
             found_device = true;
-        } else if key.parse::<u8>().ok() == Some(note) {
-            lines.push(format!("{note} = {action}"));
-            found_note = true;
+        } else if parse_midi_trigger(key, 1).ok().as_deref() == Some(trigger) {
+            lines.push(format!("{trigger_text} = {action}"));
+            found_trigger = true;
         } else {
             lines.push(raw_line.to_owned());
         }
@@ -139,8 +158,8 @@ fn update_config(text: &str, device: &str, note: u8, action: &str) -> Result<Str
     if !found_device {
         lines.push(format!("device = {device}"));
     }
-    if !found_note {
-        lines.push(format!("{note} = {action}"));
+    if !found_trigger {
+        lines.push(format!("{trigger_text} = {action}"));
     }
     Ok(lines.join("\n") + "\n")
 }
@@ -153,6 +172,25 @@ fn midi_note(message: &[u8]) -> Option<(u8, bool)> {
         (0x90, 1..=127) => Some((message[1], true)),
         (0x80, _) | (0x90, 0) => Some((message[1], false)),
         _ => None,
+    }
+}
+
+fn capture_midi_trigger(receiver: &mpsc::Receiver<(u8, bool)>) -> Result<Vec<u8>, String> {
+    let mut active = HashSet::new();
+    let mut captured = HashSet::new();
+    loop {
+        let (note, pressed) = receiver.recv().map_err(|_| "MIDI connection stopped")?;
+        if pressed {
+            active.insert(note);
+            captured.insert(note);
+        } else {
+            active.remove(&note);
+        }
+        if !captured.is_empty() && active.is_empty() {
+            let mut trigger: Vec<_> = captured.into_iter().collect();
+            trigger.sort_unstable();
+            return Ok(trigger);
+        }
     }
 }
 
@@ -324,14 +362,14 @@ fn setup(path: &Path) -> Result<(), String> {
     let midi_device = input
         .port_name(port)
         .unwrap_or_else(|_| "unknown device".into());
-    let (sender, receiver) = mpsc::sync_channel(1);
+    let (sender, receiver) = mpsc::channel();
     let _connection = input
         .connect(
             port,
             "midi-hook-setup",
             move |_, message, _| {
-                if let Some((note, true)) = midi_note(message) {
-                    let _ = sender.try_send(note);
+                if let Some(event) = midi_note(message) {
+                    let _ = sender.send(event);
                 }
             },
             (),
@@ -341,9 +379,9 @@ fn setup(path: &Path) -> Result<(), String> {
     println!("Setup ready. Press Ctrl+C while waiting for a MIDI note to quit.");
     loop {
         while receiver.try_recv().is_ok() {}
-        println!("Press the MIDI note to map...");
-        let note = receiver.recv().map_err(|_| "MIDI connection stopped")?;
-        println!("Learned MIDI note {note}.");
+        println!("Hold the MIDI notes to map, then release them all...");
+        let trigger = capture_midi_trigger(&receiver)?;
+        println!("Learned MIDI trigger {}.", trigger_label(&trigger));
         let action = loop {
             match prompt("Action [s=press shortcut, t=type shortcut, c=type command]: ")?.as_str() {
                 "s" | "shortcut" => {
@@ -368,7 +406,7 @@ fn setup(path: &Path) -> Result<(), String> {
                 _ => eprintln!("Enter s, t, or c"),
             }
         };
-        text = update_config(&text, &midi_device, note, &action)?;
+        text = update_config(&text, &midi_device, &trigger, &action)?;
         fs::write(path, &text)
             .map_err(|error| format!("could not write {}: {error}", path.display()))?;
         println!("Captured: {action}");
@@ -427,6 +465,18 @@ fn run_shortcut(events: &[(u16, i32)]) {
     });
 }
 
+fn trigger_active(trigger: &[u8], held: &HashSet<u8>) -> bool {
+    trigger.iter().all(|note| held.contains(note))
+}
+
+fn trigger_label(trigger: &[u8]) -> String {
+    trigger
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
 fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
     if config.actions.is_empty() {
         return Err("config contains no mappings; run `midi-hook setup`".into());
@@ -440,8 +490,10 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
         .port_name(port)
         .unwrap_or_else(|_| "unknown device".into());
     let actions = config.actions;
-    let held = Arc::new(Mutex::new(HashSet::new()));
-    let callback_held = Arc::clone(&held);
+    let held_keys = Arc::new(Mutex::new(HashSet::new()));
+    let callback_held_keys = Arc::clone(&held_keys);
+    let mut held_notes = HashSet::new();
+    let mut active_triggers = HashSet::new();
     let connection = input
         .connect(
             port,
@@ -450,36 +502,60 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                 let Some((note, pressed)) = midi_note(message) else {
                     return;
                 };
-                match actions.get(&note) {
-                    Some(Action::Command(command)) if pressed => {
-                        println!("note {note}: command {command}");
-                        run_command(command.clone());
+                if pressed {
+                    held_notes.insert(note);
+                } else {
+                    held_notes.remove(&note);
+                }
+
+                for (trigger, action) in &actions {
+                    let now_active = trigger_active(trigger, &held_notes);
+                    let was_active = active_triggers.contains(trigger);
+                    if now_active == was_active {
+                        continue;
                     }
-                    Some(Action::HeldKey(code)) => {
-                        let Ok(mut held) = callback_held.lock() else {
-                            return;
-                        };
-                        let changed = if pressed {
-                            held.insert(*code)
-                        } else {
-                            held.remove(code)
-                        };
-                        if changed {
-                            println!(
-                                "note {note}: key {code} {}",
-                                if pressed { "down" } else { "up" }
-                            );
-                            if let Err(error) = run_held_key(*code, pressed) {
-                                eprintln!("{error}");
+                    let label = trigger_label(trigger);
+                    if now_active {
+                        active_triggers.insert(trigger.clone());
+                        match action {
+                            Action::Command(command) => {
+                                println!("notes {label}: command {command}");
+                                run_command(command.clone());
+                            }
+                            Action::HeldKey(code) => {
+                                let Ok(mut held) = callback_held_keys.lock() else {
+                                    return;
+                                };
+                                if held.insert(*code) {
+                                    println!("notes {label}: key {code} down");
+                                    if let Err(error) = run_held_key(*code, true) {
+                                        eprintln!("{error}");
+                                    }
+                                }
+                            }
+                            Action::Shortcut(events) => {
+                                println!("notes {label}: shortcut");
+                                run_shortcut(events);
+                            }
+                        }
+                    } else {
+                        active_triggers.remove(trigger);
+                        if let Action::HeldKey(code) = action {
+                            let Ok(mut held) = callback_held_keys.lock() else {
+                                return;
+                            };
+                            if held.remove(code) {
+                                println!("notes {label}: key {code} up");
+                                if let Err(error) = run_held_key(*code, false) {
+                                    eprintln!("{error}");
+                                }
                             }
                         }
                     }
-                    Some(Action::Shortcut(events)) if pressed => {
-                        println!("note {note}: shortcut");
-                        run_shortcut(events);
-                    }
-                    None if pressed => println!("note {note}: unmapped"),
-                    _ => {}
+                }
+
+                if pressed && !actions.keys().any(|trigger| trigger.contains(&note)) {
+                    println!("note {note}: unmapped");
                 }
             },
             (),
@@ -491,7 +567,7 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
         .read_line(&mut line)
         .map_err(|error| error.to_string())?;
     drop(connection);
-    if let Ok(mut held) = held.lock() {
+    if let Ok(mut held) = held_keys.lock() {
         for code in held.drain() {
             let _ = run_held_key(code, false);
         }
@@ -541,19 +617,23 @@ mod tests {
         assert_eq!(capture.events, vec![(57, 1), (35, 1), (35, 0), (57, 0)]);
 
         let config = parse_config(
-            "device = test\n60 = shortcut 57:1 35:1 35:0 57:0\n61 = key 29\n62 = command echo hi",
+            "device = test\n60 = shortcut 57:1 35:1 35:0 57:0\n61 = key 29\n62 = command echo hi\n62+60+61 = command combo",
         )
         .unwrap();
         assert_eq!(
-            config.actions[&60],
+            config.actions[&vec![60]],
             Action::Shortcut(vec![(57, 1), (35, 1), (35, 0), (57, 0)])
         );
-        assert_eq!(config.actions[&61], Action::HeldKey(29));
-        assert_eq!(config.actions[&62], Action::Command("echo hi".into()));
+        assert_eq!(config.actions[&vec![61]], Action::HeldKey(29));
+        assert_eq!(config.actions[&vec![62]], Action::Command("echo hi".into()));
+        assert_eq!(
+            config.actions[&vec![60, 61, 62]],
+            Action::Command("combo".into())
+        );
         assert_eq!(
             parse_config("60 = shortcut ctrl+space+f4+c")
                 .unwrap()
-                .actions[&60],
+                .actions[&vec![60]],
             Action::Shortcut(vec![
                 (29, 1),
                 (57, 1),
@@ -564,6 +644,28 @@ mod tests {
                 (57, 0),
                 (29, 0),
             ])
+        );
+        let held = HashSet::from([60, 61, 62]);
+        assert!(trigger_active(&[60, 61, 62], &held));
+        assert!(!trigger_active(&[60, 61, 63], &held));
+
+        let (sender, receiver) = mpsc::channel();
+        for event in [(61, true), (60, true), (60, false), (61, false)] {
+            sender.send(event).unwrap();
+        }
+        assert_eq!(capture_midi_trigger(&receiver).unwrap(), vec![60, 61]);
+        let updated = update_config(
+            "device = old\n61+60 = command old\n",
+            "new",
+            &[60, 61],
+            "command new",
+        )
+        .unwrap();
+        let updated = parse_config(&updated).unwrap();
+        assert_eq!(updated.device.as_deref(), Some("new"));
+        assert_eq!(
+            updated.actions[&vec![60, 61]],
+            Action::Command("new".into())
         );
         assert_eq!(midi_note(&[0x90, 60, 100]), Some((60, true)));
         assert_eq!(midi_note(&[0x90, 60, 0]), Some((60, false)));

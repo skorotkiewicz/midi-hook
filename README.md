@@ -20,7 +20,7 @@ Keyboard playback requires `ydotoold`.
 cargo run --release -- setup
 ```
 
-Select a MIDI input and physical keyboard. For each MIDI note, choose:
+Select a MIDI input and physical keyboard. Hold one or more MIDI notes, release them all, then choose:
 
 ```text
 s  Press and release a physical shortcut
@@ -28,9 +28,9 @@ t  Type a shortcut such as ctrl+space+f4+c
 c  Type a shell command
 ```
 
-Hold all keys in a shortcut at the same time, then release them. Setup records the exact press/release sequence. A single captured key, such as Ctrl, is held until the MIDI note is released. Press Esc to cancel physical capture if you selected the wrong keyboard.
+Hold all keys in a shortcut at the same time, then release them. Setup records the exact press/release sequence. A single captured key, such as Ctrl, is held until the MIDI trigger is released. Press Esc to cancel physical capture if you selected the wrong keyboard.
 
-Setup saves `commands.conf` and waits for the next MIDI note. Press Ctrl+C while it waits to exit.
+Setup saves `commands.conf` and waits for the next MIDI trigger. Press Ctrl+C while it waits to exit.
 
 ## Listen
 
@@ -48,6 +48,9 @@ device = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
 61 = shortcut ctrl+space+f4+c
 62 = key 29
 63 = command notify-send "MIDI note 63"
+60+61+62 = command notify-send "MIDI chord pressed"
 ```
 
-Manual shortcuts can use `+`-separated key names. Captured shortcuts store exact Linux input event codes and values. `key` stores one Linux input code. `command` runs through `/bin/sh -c`. Only use configuration files you trust.
+A `+`-separated MIDI trigger runs once when all listed MIDI notes are held. It re-arms when any required note is released. Single-note mappings still run independently.
+
+Manual keyboard shortcuts can use `+`-separated key names. Captured shortcuts store exact Linux input event codes and values. `key` stores one Linux input code. `command` runs through `/bin/sh -c`. Only use configuration files you trust.
