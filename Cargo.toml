@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-midir = "0.11.0"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-crossterm = "0.29.0"
+crossterm = "0.29"
+evdev = "0.13"
+midir = "0.11"

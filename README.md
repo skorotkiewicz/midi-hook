@@ -2,76 +2,52 @@
 
 # MIDI Hook
 
-Run a shell command when a MIDI keyboard key is pressed.
+Map MIDI notes to physical keyboard shortcuts, held keys, or shell commands on Linux.
 
-## Setup wizard
+## Permissions
 
-```sh
-cargo run --release -- setup
-```
-
-The wizard:
-
-1. Lists MIDI input devices.
-2. Asks you to select one.
-3. Learns the next key you press.
-4. Asks for the command.
-5. Saves `commands.conf` and starts listening.
-
-Run the wizard again to add or replace another key mapping. Existing comments and other mappings are preserved.
-
-## Start with saved settings
-
-```sh
-cargo run --release -- commands.conf
-```
-
-The saved device reconnects automatically. You can override it with a device index:
-
-```sh
-cargo run --release -- commands.conf 0
-```
-
-The config format is:
-
-```text
-device = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
-60 = notify-send "Middle C pressed"
-61 = playerctl play-pause
-```
-
-MIDI Hook does not let commands read its terminal input. Start interactive commands in a separate terminal. For example:
-
-```text
-61 = kitty pi -c
-```
-
-## Use MIDI keys as computer keys
-
-On Linux, the shortcut wizard records a computer key or shortcut and creates the `ydotool` command:
-
-```sh
-cargo run --release -- setup-key
-```
-
-Select the MIDI key first. Then press a computer key or shortcut such as Ctrl+C. The wizard saves the mapping and starts listening.
-
-`ydotool` works with X11 and Wayland. Generated mappings look like this:
-
-```text
-60 = ydotool key 57:1 57:0           # Space
-61 = ydotool key 28:1 28:0           # Enter
-62 = ydotool key 29:1 46:1 46:0 29:0 # Ctrl+C
-```
-
-Add your user to the `input` group so `ydotoold` can access `/dev/uinput`:
+Setup reads the keyboard from `/dev/input`. Add your user to the `input` group, then log out and back in:
 
 ```sh
 sudo usermod -aG input "$USER"
 ```
 
-Log out and log in again after this command. Then start `ydotoold` before you start MIDI Hook.
+Keyboard playback requires `ydotoold`.
 
-The app prints unmapped note numbers to help with configuration. It uses `/bin/sh -c` on Linux and macOS. It uses `cmd.exe /C` on Windows. Only use a config file you trust.
+## Setup
 
-Restart the listener after manual config edits. Press Enter to quit.
+```sh
+cargo run --release -- setup
+```
+
+Select a MIDI input and physical keyboard. For each MIDI note, choose:
+
+```text
+s  Press and release a physical shortcut
+t  Type a shortcut such as ctrl+space+f4+c
+c  Type a shell command
+```
+
+Hold all keys in a shortcut at the same time, then release them. Setup records the exact press/release sequence. A single captured key, such as Ctrl, is held until the MIDI note is released. Press Esc to cancel physical capture if you selected the wrong keyboard.
+
+Setup saves `commands.conf` and waits for the next MIDI note. Press Ctrl+C while it waits to exit.
+
+## Listen
+
+```sh
+cargo run --release -- commands.conf
+```
+
+The listener reconnects to the saved MIDI device. Press Enter to stop it.
+
+## Configuration
+
+```text
+device = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
+60 = shortcut 57:1 35:1 35:0 57:0
+61 = shortcut ctrl+space+f4+c
+62 = key 29
+63 = command notify-send "MIDI note 63"
+```
+
+Manual shortcuts can use `+`-separated key names. Captured shortcuts store exact Linux input event codes and values. `key` stores one Linux input code. `command` runs through `/bin/sh -c`. Only use configuration files you trust.
