@@ -11,6 +11,7 @@ Map MIDI notes to physical keyboard shortcuts, held keys, or shell commands on L
 Setup reads the keyboard from `/dev/input`. Add your user to the `input` group, then log out and back in:
 
 ```sh
+yay -S midi-hook # Arch Linux
 sudo usermod -aG input "$USER"
 ```
 
@@ -28,6 +29,7 @@ Grant your terminal or MIDI Hook Input Monitoring permission for capture and Acc
 
 ```sh
 cargo run --release -- setup
+# midi-hook setup
 ```
 
 Select a MIDI input and, on Linux, a physical keyboard. Hold one or more MIDI notes, release them all, then choose whether multiple notes are an unordered chord or ordered sequence. Next choose:
@@ -46,6 +48,7 @@ Setup saves `commands.conf` and waits for the next MIDI trigger. Press Ctrl+C wh
 
 ```sh
 cargo run --release -- commands.conf
+# midi-hook commands.conf
 ```
 
 The listener reconnects to the saved MIDI device. Press Enter to stop it.
