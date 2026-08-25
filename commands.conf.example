@@ -1,3 +1,6 @@
+# The setup wizard writes the exact MIDI device name.
+device = Your MIDI device name
+
 # MIDI note number = shell command
 60 = notify-send "Middle C pressed"
 61 = playerctl play-pause

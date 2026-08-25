@@ -1,3 +1,5 @@
+![MIDI Hook banner](assets/banner.svg)
+
 # MIDI Hook
 
 Run a shell command when a MIDI keyboard key is pressed.
