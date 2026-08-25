@@ -398,6 +398,36 @@ fn trigger_label(trigger: &MidiTrigger) -> String {
         .join(separator)
 }
 
+fn test_midi(requested_port: Option<&str>) -> Result<(), String> {
+    let mut input = MidiInput::new("midi-hook-test").map_err(|error| error.to_string())?;
+    input.ignore(Ignore::None);
+    let port_index = choose_midi_port(&input, requested_port, None)?;
+    let ports = input.ports();
+    let port = ports.get(port_index).ok_or("MIDI input disappeared")?;
+    let port_name = input
+        .port_name(port)
+        .unwrap_or_else(|_| "unknown device".into());
+    let connection = input
+        .connect(
+            port,
+            "midi-hook-test",
+            move |_, message, _| {
+                if let Some((note, true)) = midi_note(message) {
+                    println!("{note}");
+                }
+            },
+            (),
+        )
+        .map_err(|error| error.to_string())?;
+    println!("Testing {port_name}. Press MIDI notes; press Enter to quit.");
+    let mut line = String::new();
+    io::stdin()
+        .read_line(&mut line)
+        .map_err(|error| error.to_string())?;
+    drop(connection);
+    Ok(())
+}
+
 fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
     if config.actions.is_empty() {
         return Err("config contains no mappings; run `midi-hook setup`".into());
@@ -548,7 +578,7 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
 fn run() -> Result<(), String> {
     let mut args = env::args().skip(1);
     let first = args.next().ok_or(
-        "usage: midi-hook setup [commands.conf]\n       midi-hook <commands.conf> [port-index]",
+        "usage: midi-hook setup [commands.conf]\n       midi-hook test [port-index]\n       midi-hook <commands.conf> [port-index]",
     )?;
     if matches!(first.as_str(), "setup" | "--setup") {
         let path = args.next().unwrap_or_else(|| "commands.conf".into());
@@ -556,6 +586,13 @@ fn run() -> Result<(), String> {
             return Err("usage: midi-hook setup [commands.conf]".into());
         }
         return setup(Path::new(&path));
+    }
+    if first == "test" {
+        let requested_port = args.next();
+        if args.next().is_some() {
+            return Err("usage: midi-hook test [port-index]".into());
+        }
+        return test_midi(requested_port.as_deref());
     }
     let requested_port = args.next();
     if args.next().is_some() {

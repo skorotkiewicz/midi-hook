@@ -44,6 +44,18 @@ Hold all keys in a shortcut at the same time, then release them. Setup records t
 
 Setup saves `commands.conf` and waits for the next MIDI trigger. Press Ctrl+C while it waits to exit.
 
+## Test MIDI input
+
+Print each pressed MIDI note number without running any mappings:
+
+```sh
+midi-hook test
+# Optional MIDI port index:
+midi-hook test 0
+```
+
+Press Enter to stop.
+
 ## Listen
 
 ```sh
