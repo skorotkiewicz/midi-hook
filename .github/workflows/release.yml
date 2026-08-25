@@ -1,0 +1,152 @@
+name: Release midi-hook
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu,     os: ubuntu-latest  }
+          - { target: aarch64-unknown-linux-gnu,    os: ubuntu-latest  }
+          - { target: x86_64-apple-darwin,          os: macos-latest   }
+          - { target: aarch64-apple-darwin,         os: macos-latest   }
+          - { target: x86_64-pc-windows-msvc,       os: windows-latest }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+
+      - name: Install cross
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build ARM64 Linux
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cross build --release --locked --target ${{ matrix.target }}
+
+      - name: Build
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir dist && cd dist
+          cp ../target/${{ matrix.target }}/release/midi-hook midi-hook
+          cp ../README.md README.md
+          cp ../commands.conf.example commands.conf.example
+          tar czf ../midi-hook-${{ github.ref_name }}-${{ matrix.target }}.tar.gz *
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          mkdir dist
+          copy target\${{ matrix.target }}\release\midi-hook.exe dist\midi-hook.exe
+          copy README.md dist\README.md
+          copy commands.conf.example dist\commands.conf.example
+          cd dist && 7z a ..\midi-hook-${{ github.ref_name }}-${{ matrix.target }}.zip *
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: midi-hook-${{ matrix.target }}
+          path: midi-hook-${{ github.ref_name }}-${{ matrix.target }}.*
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-features
+
+  check:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  release:
+    name: Release
+    needs: [build, test, check]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: midi-hook-*
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+
+  # aur-publish:
+  #   name: Publish to AUR
+  #   needs: release
+  #   if: startsWith(github.ref, 'refs/tags/')
+  #   runs-on: ubuntu-latest
+  #   container:
+  #     image: archlinux:base-devel
+
+  #   steps:
+  #     - uses: actions/checkout@v4
+
+  #     - name: Setup builder user
+  #       run: |
+  #         pacman -Syu --noconfirm
+  #         pacman -S --noconfirm git openssh pacman-contrib sudo
+  #         useradd -m builder
+  #         echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+  #         chown -R builder:builder "$GITHUB_WORKSPACE"
+
+  #     - name: Update PKGBUILD and generate .SRCINFO
+  #       run: |
+  #         VERSION=${GITHUB_REF#refs/tags/v}
+  #         sed -i "s/^pkgver=.*/pkgver=$VERSION/" arch/PKGBUILD
+  #         sed -i 's/^pkgrel=.*/pkgrel=1/' arch/PKGBUILD
+  #         sudo -u builder bash -lc 'cd arch && updpkgsums && makepkg --printsrcinfo > .SRCINFO'
+
+  #     - name: Publish AUR package
+  #       uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
+  #       with:
+  #         pkgname: midi-hook
+  #         pkgbuild: ./arch/PKGBUILD
+  #         assets: |
+  #           ./arch/.SRCINFO
+  #         commit_username: ${{ secrets.AUR_USERNAME }}
+  #         commit_email: ${{ secrets.AUR_EMAIL }}
+  #         ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+  #         commit_message: "aur: ${{ github.ref_name }}"
+  #         ssh_keyscan_types: rsa,ecdsa,ed25519
