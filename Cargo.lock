@@ -448,6 +448,7 @@ dependencies = [
  "crossterm",
  "ctrlc",
  "evdev",
+ "libc",
  "midir",
  "windows-sys 0.59.0",
 ]

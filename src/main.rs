@@ -2,6 +2,7 @@ mod keyboard;
 mod midi_feedback;
 mod midi_monitor;
 mod shortcut;
+mod toggle_process;
 
 use keyboard::{
     capture_keyboard_action, choose_keyboard, prepare_output, run_held_key, run_shortcut,
@@ -15,10 +16,11 @@ use std::env;
 use std::fs;
 use std::io::{self, ErrorKind, Write};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
+use toggle_process::ToggleProcess;
 
 #[derive(Debug, PartialEq)]
 enum Action {
@@ -478,35 +480,33 @@ fn run_command(command: String) {
     });
 }
 
-fn toggle_command(running: &mut HashMap<MidiTrigger, Child>, trigger: &MidiTrigger, command: &str) {
-    if let Some(mut child) = running.remove(trigger) {
-        match child.try_wait() {
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                println!("stopped toggle: {command}");
-                return;
-            }
-            Ok(Some(_)) => {}
-            Err(error) => {
-                eprintln!("could not check toggle command: {error}");
-                return;
-            }
+fn toggle_command(
+    running: &mut HashMap<MidiTrigger, ToggleProcess>,
+    trigger: &MidiTrigger,
+    command: &str,
+) {
+    if let Some(process) = running.remove(trigger) {
+        if let Err(error) = process.stop() {
+            eprintln!("could not stop toggle command: {error}");
+        } else {
+            println!("stopped toggle: {command}");
         }
+        return;
     }
-    match shell_command(command).spawn() {
-        Ok(child) => {
-            running.insert(trigger.clone(), child);
+    match ToggleProcess::spawn(shell_command(command)) {
+        Ok(process) => {
+            running.insert(trigger.clone(), process);
             println!("started toggle: {command}");
         }
         Err(error) => eprintln!("could not start toggle command: {error}"),
     }
 }
 
-fn stop_toggle_commands(running: &mut HashMap<MidiTrigger, Child>) {
-    for (_, mut child) in running.drain() {
-        let _ = child.kill();
-        let _ = child.wait();
+fn stop_toggle_commands(running: &mut HashMap<MidiTrigger, ToggleProcess>) {
+    for (_, process) in running.drain() {
+        if let Err(error) = process.stop() {
+            eprintln!("could not stop toggle command: {error}");
+        }
     }
 }
 
@@ -650,21 +650,10 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
         })
         .collect();
     let held_keys = Arc::new(Mutex::new(HashSet::new()));
-    let cleanup_held_keys = Arc::clone(&held_keys);
-    let cleanup_feedback = feedback.clone();
+    let (shutdown_sender, shutdown_receiver) = mpsc::channel::<Result<(), String>>();
+    let interrupt_sender = shutdown_sender.clone();
     ctrlc::set_handler(move || {
-        if let Ok(mut held) = cleanup_held_keys.lock() {
-            for code in held.drain() {
-                let _ = run_held_key(code, false);
-            }
-        }
-        if let Some(feedback) = &cleanup_feedback
-            && let Ok(mut feedback) = feedback.lock()
-        {
-            feedback.release_all();
-        }
-        let _ = crossterm::terminal::disable_raw_mode();
-        std::process::exit(130);
+        let _ = interrupt_sender.send(Ok(()));
     })
     .map_err(|error| format!("could not install Ctrl+C handler: {error}"))?;
     let callback_held_keys = Arc::clone(&held_keys);
@@ -855,10 +844,17 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
     println!("Listening on {port_name}. Press Enter to quit.");
-    let mut line = String::new();
-    io::stdin()
-        .read_line(&mut line)
-        .map_err(|error| error.to_string())?;
+    thread::spawn(move || {
+        let mut line = String::new();
+        let result = io::stdin()
+            .read_line(&mut line)
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+        let _ = shutdown_sender.send(result);
+    });
+    shutdown_receiver
+        .recv()
+        .map_err(|_| "shutdown listener stopped unexpectedly".to_owned())??;
     drop(connection);
     worker
         .join()
@@ -1054,6 +1050,11 @@ mod tests {
         assert_eq!(midi_control(&[0xb0, 64, 127]), Some((64, 127)));
         assert_eq!(midi_control(&[0xb0, 64, 0]), Some((64, 0)));
         assert!(parse_config("60 = shortcut 57:1").is_err());
+    }
+
+    #[test]
+    fn example_config_parses() {
+        parse_config(include_str!("../commands.conf.example")).unwrap();
     }
 
     #[cfg(unix)]
