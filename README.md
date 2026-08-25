@@ -40,6 +40,24 @@ device = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
 61 = playerctl play-pause
 ```
 
+MIDI Hook does not let commands read its terminal input. Start interactive commands in a separate terminal. For example:
+
+```text
+61 = kitty pi -c
+```
+
+## Use MIDI keys as computer keys
+
+On Linux with Wayland, `ydotool` can send normal keyboard input:
+
+```text
+60 = ydotool key 57:1 57:0           # Space
+61 = ydotool key 28:1 28:0           # Enter
+62 = ydotool key 29:1 46:1 46:0 29:0 # Ctrl+C
+```
+
+Start `ydotoold` and give it access to `/dev/uinput` before you start MIDI Hook.
+
 The app prints unmapped note numbers to help with configuration. It uses `/bin/sh -c` on Linux and macOS. It uses `cmd.exe /C` on Windows. Only use a config file you trust.
 
 Restart the listener after manual config edits. Press Enter to quit.

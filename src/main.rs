@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::io::{self, ErrorKind, Write};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
@@ -91,7 +91,8 @@ fn shell_command(command: &str) -> Command {
         ("/bin/sh", "-c")
     };
     let mut process = Command::new(program);
-    process.arg(flag).arg(command);
+    // process.arg(flag).arg(command);
+    process.arg(flag).arg(command).stdin(Stdio::null());
     process
 }
 
