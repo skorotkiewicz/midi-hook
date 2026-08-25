@@ -1,6 +1,6 @@
 # Maintainer: Sebastian Korotkiewicz <skorotkiewicz@gmail.com>
 pkgname=midi-hook
-pkgver=0.1.0
+pkgver=0.0.0
 pkgrel=1
 pkgdesc="Map MIDI notes to keyboard shortcuts and shell commands"
 arch=('x86_64' 'aarch64')
