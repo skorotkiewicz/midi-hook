@@ -553,8 +553,18 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
 fn run() -> Result<(), String> {
     let mut args = env::args().skip(1);
     let first = args.next().ok_or(
-        "usage: midi-hook setup [commands.conf]\n       midi-hook test [--details] [port-index]\n       midi-hook <commands.conf> [port-index]",
+        "usage: midi-hook setup [commands.conf]\n       midi-hook test [--details] [port-index]\n       midi-hook --version\n       midi-hook <commands.conf> [port-index]",
     )?;
+    if matches!(first.as_str(), "--version" | "-V") {
+        if args.next().is_some() {
+            return Err("usage: midi-hook --version".into());
+        }
+        println!(
+            "midi-hook {} 🎹 no wrong notes, only unmapped ones",
+            env!("CARGO_PKG_VERSION")
+        );
+        return Ok(());
+    }
     if matches!(first.as_str(), "setup" | "--setup") {
         let path = args.next().unwrap_or_else(|| "commands.conf".into());
         if args.next().is_some() {
