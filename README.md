@@ -20,7 +20,7 @@ Keyboard playback requires `ydotoold`.
 cargo run --release -- setup
 ```
 
-Select a MIDI input and physical keyboard. Hold one or more MIDI notes, release them all, then choose:
+Select a MIDI input and physical keyboard. Hold one or more MIDI notes, release them all, then choose whether multiple notes are an unordered chord or ordered sequence. Next choose:
 
 ```text
 s  Press and release a physical shortcut
@@ -49,8 +49,9 @@ device = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
 62 = key 29
 63 = command notify-send "MIDI note 63"
 60+61+62 = command notify-send "MIDI chord pressed"
+48>50>52 = command notify-send "MIDI sequence entered"
 ```
 
-A `+`-separated MIDI trigger runs once when all listed MIDI notes are held. It re-arms when any required note is released. Single-note mappings still run independently.
+A `+`-separated MIDI trigger runs once when all listed MIDI notes are held. It re-arms when any required note is released. A `>`-separated trigger requires note-on events in exactly that order; a wrong note resets progress. Sequences have no timeout. Single-note mappings still run independently.
 
 Manual keyboard shortcuts can use `+`-separated key names. Captured shortcuts store exact Linux input event codes and values. `key` stores one Linux input code. `command` runs through `/bin/sh -c`. Only use configuration files you trust.
