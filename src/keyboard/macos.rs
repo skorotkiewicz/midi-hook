@@ -67,10 +67,13 @@ pub(crate) fn run_held_key(code: u16, pressed: bool) -> Result<(), String> {
 }
 
 pub(crate) fn run_shortcut(events: &[(u16, i32)]) {
-    for (code, value) in events {
+    for (index, (code, value)) in events.iter().enumerate() {
         if let Err(error) = run_held_key(*code, *value == 1) {
             eprintln!("{error}");
             break;
+        }
+        if index + 1 < events.len() {
+            thread::sleep(Duration::from_millis(5));
         }
     }
 }

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 crossterm = "0.29"
+ctrlc = "3"
 midir = "0.11"
 
 [target.'cfg(target_os = "linux")'.dependencies]
