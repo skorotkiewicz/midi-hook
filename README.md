@@ -40,4 +40,6 @@ device = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
 61 = playerctl play-pause
 ```
 
-The app prints unmapped note numbers to help with configuration. It runs commands through `/bin/sh -c`, so only use a config file you trust. Restart the listener after manual config edits. Press Enter to quit.
+The app prints unmapped note numbers to help with configuration. It uses `/bin/sh -c` on Linux and macOS. It uses `cmd.exe /C` on Windows. Only use a config file you trust.
+
+Restart the listener after manual config edits. Press Enter to quit.

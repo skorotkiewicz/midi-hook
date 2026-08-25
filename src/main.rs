@@ -84,14 +84,23 @@ fn note_on(message: &[u8]) -> Option<u8> {
     .then_some(message[1])
 }
 
+fn shell_command(command: &str) -> Command {
+    let (program, flag) = if cfg!(windows) {
+        ("cmd.exe", "/C")
+    } else {
+        ("/bin/sh", "-c")
+    };
+    let mut process = Command::new(program);
+    process.arg(flag).arg(command);
+    process
+}
+
 fn execute(command: String) {
-    thread::spawn(
-        move || match Command::new("/bin/sh").arg("-c").arg(&command).status() {
-            Ok(status) if !status.success() => eprintln!("command failed ({status}): {command}"),
-            Err(error) => eprintln!("could not run command: {error}"),
-            _ => {}
-        },
-    );
+    thread::spawn(move || match shell_command(&command).status() {
+        Ok(status) if !status.success() => eprintln!("command failed ({status}): {command}"),
+        Err(error) => eprintln!("could not run command: {error}"),
+        _ => {}
+    });
 }
 
 fn prompt(message: &str) -> Result<String, String> {
@@ -297,6 +306,14 @@ mod tests {
         assert_eq!(note_on(&[0x90, 60, 100]), Some(60));
         assert_eq!(note_on(&[0x90, 60, 0]), None);
         assert_eq!(note_on(&[0x80, 60, 100]), None);
+        let shell = shell_command("echo test");
+        let expected = if cfg!(windows) {
+            ("cmd.exe", "/C")
+        } else {
+            ("/bin/sh", "-c")
+        };
+        assert_eq!(shell.get_program(), expected.0);
+        assert_eq!(shell.get_args().next().unwrap(), expected.1);
         assert!(parse_config("128 = nope").is_err());
         assert!(parse_config("60=a\n60=b").is_err());
     }
