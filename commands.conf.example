@@ -1,0 +1,3 @@
+# MIDI note number = shell command
+60 = notify-send "Middle C pressed"
+61 = playerctl play-pause
