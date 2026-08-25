@@ -1,11 +1,11 @@
 mod keyboard;
-mod named_key_code;
+mod shortcut;
 
 use keyboard::{
     capture_keyboard_action, choose_keyboard, prepare_output, run_held_key, run_shortcut,
 };
 use midir::{Ignore, MidiInput};
-use named_key_code::parse_shortcut;
+use shortcut::parse_shortcut;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
