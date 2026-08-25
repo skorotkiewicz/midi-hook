@@ -138,17 +138,17 @@ jobs:
   #     - name: Update PKGBUILD and generate .SRCINFO
   #       run: |
   #         VERSION=${GITHUB_REF#refs/tags/v}
-  #         sed -i "s/^pkgver=.*/pkgver=$VERSION/" arch/PKGBUILD
-  #         sed -i 's/^pkgrel=.*/pkgrel=1/' arch/PKGBUILD
-  #         sudo -u builder bash -lc 'cd arch && updpkgsums && makepkg --printsrcinfo > .SRCINFO'
+  #         sed -i "s/^pkgver=.*/pkgver=$VERSION/" assets/PKGBUILD
+  #         sed -i 's/^pkgrel=.*/pkgrel=1/' assets/PKGBUILD
+  #         sudo -u builder bash -lc 'cd assets && updpkgsums && makepkg --printsrcinfo > .SRCINFO'
 
   #     - name: Publish AUR package
   #       uses: KSXGitHub/github-actions-deploy-aur@v4.1.2
   #       with:
   #         pkgname: midi-hook
-  #         pkgbuild: ./arch/PKGBUILD
+  #         pkgbuild: ./assets/PKGBUILD
   #         assets: |
-  #           ./arch/.SRCINFO
+  #           ./assets/.SRCINFO
   #         commit_username: ${{ secrets.AUR_USERNAME }}
   #         commit_email: ${{ secrets.AUR_EMAIL }}
   #         ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
