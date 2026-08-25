@@ -36,6 +36,7 @@ enum MidiTrigger {
     Sequence(Vec<u8>),
     Velocity { note: u8, start: u8, end: u8 },
     Control(u8),
+    Pitch,
 }
 
 #[derive(Default)]
@@ -46,6 +47,9 @@ struct Config {
 }
 
 fn parse_midi_trigger(value: &str, line: usize) -> Result<MidiTrigger, String> {
+    if value == "pitch" {
+        return Ok(MidiTrigger::Pitch);
+    }
     if let Some(control) = value.strip_prefix("cc ") {
         return control
             .trim()
@@ -164,6 +168,11 @@ fn parse_config(text: &str) -> Result<Config, String> {
                 "line {line_number}: ordered sequences cannot hold a key"
             ));
         }
+        if matches!(trigger, MidiTrigger::Pitch) && !matches!(action, Action::Command(_)) {
+            return Err(format!(
+                "line {line_number}: pitch bend only supports command actions"
+            ));
+        }
         if let MidiTrigger::Velocity { note, start, end } = &trigger
             && config.actions.keys().any(|existing| {
                 matches!(
@@ -256,6 +265,11 @@ fn midi_control(message: &[u8]) -> Option<(u8, u8)> {
         .then_some((message[1], message[2]))
 }
 
+fn midi_pitch(message: &[u8]) -> Option<u16> {
+    (message.len() >= 3 && message[1] <= 127 && message[2] <= 127 && message[0] & 0xf0 == 0xe0)
+        .then(|| u16::from(message[1]) + (u16::from(message[2]) << 7))
+}
+
 #[derive(Debug, PartialEq)]
 enum MidiCapture {
     Notes(Vec<u8>),
@@ -266,6 +280,7 @@ enum MidiCapture {
 enum MidiInputEvent {
     Note(u8, u8),
     Control(u8, u8),
+    Pitch(u16),
 }
 
 fn capture_midi_trigger(receiver: &mpsc::Receiver<MidiInputEvent>) -> Result<MidiCapture, String> {
@@ -277,7 +292,7 @@ fn capture_midi_trigger(receiver: &mpsc::Receiver<MidiInputEvent>) -> Result<Mid
             MidiInputEvent::Control(control, 1..=127) => {
                 return Ok(MidiCapture::Control(control));
             }
-            MidiInputEvent::Control(_, _) => {}
+            MidiInputEvent::Control(_, _) | MidiInputEvent::Pitch(_) => {}
             MidiInputEvent::Note(note, velocity) => {
                 if velocity > 0 {
                     active.insert(note);
@@ -428,7 +443,8 @@ fn setup(path: &Path) -> Result<(), String> {
                     .or_else(|| {
                         midi_control(message)
                             .map(|(control, value)| MidiInputEvent::Control(control, value))
-                    });
+                    })
+                    .or_else(|| midi_pitch(message).map(MidiInputEvent::Pitch));
                 if let Some(event) = event {
                     let _ = sender.send(event);
                 }
@@ -566,17 +582,11 @@ fn stop_toggle_commands(running: &mut HashMap<MidiTrigger, ToggleProcess>) {
     }
 }
 
-fn expand_cc_command(command: &str, value: u8) -> Option<String> {
-    let parameterized = command.contains("{value}") || command.contains("{percent}");
-    if value == 0 && !parameterized {
-        return None;
-    }
-    let percent = (u16::from(value) * 100 + 63) / 127;
-    Some(
-        command
-            .replace("{value}", &value.to_string())
-            .replace("{percent}", &percent.to_string()),
-    )
+fn expand_value_command(command: &str, value: u16, maximum: u16) -> String {
+    let percent = (u32::from(value) * 100 + u32::from(maximum) / 2) / u32::from(maximum);
+    command
+        .replace("{value}", &value.to_string())
+        .replace("{percent}", &percent.to_string())
 }
 
 fn velocity_ranges_overlap(start: u8, end: u8, other_start: u8, other_end: u8) -> bool {
@@ -636,7 +646,7 @@ fn trigger_notes(trigger: &MidiTrigger) -> &[u8] {
     match trigger {
         MidiTrigger::Chord(notes) | MidiTrigger::Sequence(notes) => notes,
         MidiTrigger::Velocity { note, .. } => std::slice::from_ref(note),
-        MidiTrigger::Control(_) => &[],
+        MidiTrigger::Control(_) | MidiTrigger::Pitch => &[],
     }
 }
 
@@ -654,6 +664,7 @@ fn trigger_label(trigger: &MidiTrigger) -> String {
         MidiTrigger::Sequence(notes) => note_numbers(notes, ">"),
         MidiTrigger::Velocity { note, start, end } => format!("{note} [vel={start}..{end}]"),
         MidiTrigger::Control(control) => format!("cc {control}"),
+        MidiTrigger::Pitch => "pitch".into(),
     }
 }
 
@@ -737,6 +748,15 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
         let mut running_toggles = HashMap::new();
         let mut last_note = HashMap::new();
         'events: while let Ok(event) = midi_receiver.recv() {
+            if let MidiInputEvent::Pitch(value) = event {
+                let Some(Action::Command(command)) = actions.get(&MidiTrigger::Pitch) else {
+                    continue 'events;
+                };
+                let command = expand_value_command(command, value, 16_383);
+                println!("pitch value {value}: command {command}");
+                run_command(command);
+                continue 'events;
+            }
             if let MidiInputEvent::Control(control, value) = event {
                 let trigger = MidiTrigger::Control(control);
                 let Some(action) = actions.get(&trigger) else {
@@ -746,7 +766,8 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                     continue 'events;
                 };
                 if let Action::Command(command) = action {
-                    if let Some(command) = expand_cc_command(command, value) {
+                    if value > 0 || command.contains("{value}") || command.contains("{percent}") {
+                        let command = expand_value_command(command, u16::from(value), 127);
                         println!("cc {control} value {value}: command {command}");
                         run_command(command);
                     }
@@ -916,7 +937,8 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                     .or_else(|| {
                         midi_control(message)
                             .map(|(control, value)| MidiInputEvent::Control(control, value))
-                    });
+                    })
+                    .or_else(|| midi_pitch(message).map(MidiInputEvent::Pitch));
                 if let Some(event) = event {
                     let _ = midi_sender.send(event);
                 }
@@ -1104,18 +1126,27 @@ mod tests {
         assert!(sequence_takes_priority(&[93, 94, 95], &completed));
         assert!(!sequence_takes_priority(&[93, 94], &completed));
         assert_eq!(
-            expand_cc_command("volume {value} {percent}", 64),
-            Some("volume 64 50".into())
+            expand_value_command("volume {value} {percent}", 64, 127),
+            "volume 64 50"
         );
         assert_eq!(
-            expand_cc_command("volume {percent}", 127),
-            Some("volume 100".into())
+            expand_value_command("volume {percent}", 127, 127),
+            "volume 100"
         );
-        assert_eq!(expand_cc_command("volume 5%-", 0), None);
+        assert_eq!(expand_value_command("volume {percent}", 0, 127), "volume 0");
+        assert_eq!(midi_pitch(&[0xe0, 0x00, 0x40]), Some(8192));
+        assert_eq!(midi_pitch(&[0xe0, 0x7f, 0x7f]), Some(16_383));
         assert_eq!(
-            expand_cc_command("volume {percent}", 0),
-            Some("volume 0".into())
+            expand_value_command("pitch {value} {percent}", 8192, 16_383),
+            "pitch 8192 50"
         );
+        assert_eq!(
+            parse_config("pitch = command echo {value}")
+                .unwrap()
+                .actions[&MidiTrigger::Pitch],
+            Action::Command("echo {value}".into())
+        );
+        assert!(parse_config("pitch = key 29").is_err());
 
         let (sender, receiver) = mpsc::channel();
         for (note, pressed) in [(61, true), (60, true), (60, false), (61, false)] {

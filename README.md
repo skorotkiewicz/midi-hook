@@ -54,7 +54,7 @@ cargo run --release -- test
 # midi-hook test 0
 ```
 
-Detailed diagnostics:
+Detailed diagnostics print every incoming MIDI message as hexadecimal bytes, including SysEx, clock, pitch bend, aftertouch, and unknown messages. Note messages also show the decoded held-note state and arrival order:
 
 ```sh
 cargo run --release -- test --details
@@ -90,9 +90,10 @@ output = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
 48>50>52 = command notify-send "MIDI sequence entered"
 cc 64 = key 29
 cc 76 = command wpctl set-volume @DEFAULT_SINK@ {value}%
+pitch = command echo "{value}"
 ```
 
-A `+`-separated MIDI trigger runs once when all listed MIDI notes are held. It re-arms when any required note is released. A `>`-separated trigger requires note-on events in exactly that order; a wrong note resets progress. Single-note velocity conditions use inclusive ranges such as `65 [vel=50..99]`; NoteOff releases held-key and LED state. Velocity ranges must use values from 1 through 127. Chords and sequences ignore velocity. `cc N` activates held keys and shortcuts when control N has a value from 1 through 127 and releases them at 0. CC commands run for every nonzero value. Use `{value}` for the raw `0–127` value or `{percent}` for a scaled `0–100` value; parameterized commands also run at 0. This supports absolute knobs and faders. Sequences have no timeout. Single-note mappings still run independently.
+A `+`-separated MIDI trigger runs once when all listed MIDI notes are held. It re-arms when any required note is released. A `>`-separated trigger requires note-on events in exactly that order; a wrong note resets progress. Single-note velocity conditions use inclusive ranges such as `65 [vel=50..99]`; NoteOff releases held-key and LED state. Velocity ranges must use values from 1 through 127. Chords and sequences ignore velocity. `cc N` activates held keys and shortcuts when control N has a value from 1 through 127 and releases them at 0. CC commands run for every nonzero value. Use `{value}` for the raw `0–127` CC value or `{percent}` for a scaled `0–100` value; parameterized commands also run at 0. This supports absolute knobs and faders. A `pitch` command uses the same placeholders with a raw range of `0–16383` and a scaled range of `0–100`. Sequences have no timeout. Single-note mappings still run independently.
 
 When `output` is configured, active note mappings send MIDI NoteOn feedback and send NoteOff when released. This can drive controller LEDs. Sequences and CC mappings do not send LED feedback.
 

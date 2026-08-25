@@ -30,3 +30,6 @@ cc 76 = command wpctl set-volume @DEFAULT_SINK@ {value}%
 
 # Screen brightness: MIDI 0-127 scales to 0-100%
 cc 77 = command brightnessctl set {percent}%
+
+# Pitch bend: raw value 0-16383; center is 8192
+pitch = command echo "{value}"
