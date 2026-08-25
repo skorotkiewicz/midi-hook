@@ -283,6 +283,12 @@ enum MidiInputEvent {
     Pitch(u16),
 }
 
+enum WorkerEvent {
+    Midi(MidiInputEvent),
+    CommandFinished(MidiTrigger),
+    Shutdown,
+}
+
 fn capture_midi_trigger(receiver: &mpsc::Receiver<MidiInputEvent>) -> Result<MidiCapture, String> {
     let mut active = HashSet::new();
     let mut captured = Vec::new();
@@ -543,6 +549,54 @@ fn run_command(command: String) {
     });
 }
 
+fn queue_continuous_command(
+    running: &mut HashMap<MidiTrigger, Option<(u16, String)>>,
+    trigger: MidiTrigger,
+    command: (u16, String),
+) -> Option<(u16, String)> {
+    match running.entry(trigger) {
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            entry.insert(None);
+            Some(command)
+        }
+        std::collections::hash_map::Entry::Occupied(mut entry) => {
+            entry.insert(Some(command));
+            None
+        }
+    }
+}
+
+fn finish_continuous_command(
+    running: &mut HashMap<MidiTrigger, Option<(u16, String)>>,
+    trigger: &MidiTrigger,
+) -> Option<(u16, String)> {
+    let pending = running.get_mut(trigger)?.take();
+    if pending.is_none() {
+        running.remove(trigger);
+    }
+    pending
+}
+
+fn start_continuous_command(
+    trigger: MidiTrigger,
+    value: u16,
+    command: String,
+    sender: mpsc::Sender<WorkerEvent>,
+) {
+    println!(
+        "{} value {value}: command {command}",
+        trigger_label(&trigger)
+    );
+    thread::spawn(move || {
+        match shell_command(&command).status() {
+            Ok(status) if !status.success() => eprintln!("command failed ({status}): {command}"),
+            Err(error) => eprintln!("could not run command: {error}"),
+            _ => {}
+        }
+        let _ = sender.send(WorkerEvent::CommandFinished(trigger));
+    });
+}
+
 fn toggle_command(
     running: &mut HashMap<MidiTrigger, ToggleProcess>,
     trigger: &MidiTrigger,
@@ -740,21 +794,42 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
     let callback_held_keys = Arc::clone(&held_keys);
     let callback_feedback = feedback.clone();
     let (midi_sender, midi_receiver) = mpsc::channel();
+    let shutdown_worker_sender = midi_sender.clone();
+    let command_sender = midi_sender.clone();
     let worker = thread::spawn(move || {
         let mut held_notes = HashSet::new();
         let mut active_triggers = HashSet::new();
         let mut active_controls = HashSet::new();
         let mut sequence_positions = HashMap::new();
         let mut running_toggles = HashMap::new();
+        let mut running_continuous_commands = HashMap::new();
         let mut last_note = HashMap::new();
         'events: while let Ok(event) = midi_receiver.recv() {
+            let event = match event {
+                WorkerEvent::Midi(event) => event,
+                WorkerEvent::CommandFinished(trigger) => {
+                    if let Some((value, command)) =
+                        finish_continuous_command(&mut running_continuous_commands, &trigger)
+                    {
+                        start_continuous_command(trigger, value, command, command_sender.clone());
+                    }
+                    continue;
+                }
+                WorkerEvent::Shutdown => break,
+            };
             if let MidiInputEvent::Pitch(value) = event {
-                let Some(Action::Command(command)) = actions.get(&MidiTrigger::Pitch) else {
+                let trigger = MidiTrigger::Pitch;
+                let Some(Action::Command(command)) = actions.get(&trigger) else {
                     continue 'events;
                 };
                 let command = expand_value_command(command, value, 16_383);
-                println!("pitch value {value}: command {command}");
-                run_command(command);
+                if let Some((value, command)) = queue_continuous_command(
+                    &mut running_continuous_commands,
+                    trigger.clone(),
+                    (value, command),
+                ) {
+                    start_continuous_command(trigger, value, command, command_sender.clone());
+                }
                 continue 'events;
             }
             if let MidiInputEvent::Control(control, value) = event {
@@ -767,9 +842,20 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                 };
                 if let Action::Command(command) = action {
                     if value > 0 || command.contains("{value}") || command.contains("{percent}") {
-                        let command = expand_value_command(command, u16::from(value), 127);
-                        println!("cc {control} value {value}: command {command}");
-                        run_command(command);
+                        let value = u16::from(value);
+                        let command = expand_value_command(command, value, 127);
+                        if let Some((value, command)) = queue_continuous_command(
+                            &mut running_continuous_commands,
+                            trigger.clone(),
+                            (value, command),
+                        ) {
+                            start_continuous_command(
+                                trigger,
+                                value,
+                                command,
+                                command_sender.clone(),
+                            );
+                        }
                     }
                     continue 'events;
                 }
@@ -940,7 +1026,7 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
                     })
                     .or_else(|| midi_pitch(message).map(MidiInputEvent::Pitch));
                 if let Some(event) = event {
-                    let _ = midi_sender.send(event);
+                    let _ = midi_sender.send(WorkerEvent::Midi(event));
                 }
             },
             (),
@@ -959,6 +1045,7 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
         .recv()
         .map_err(|_| "shutdown listener stopped unexpectedly".to_owned())??;
     drop(connection);
+    let _ = shutdown_worker_sender.send(WorkerEvent::Shutdown);
     worker
         .join()
         .map_err(|_| "MIDI worker stopped unexpectedly".to_owned())?;
@@ -1149,6 +1236,24 @@ mod tests {
             Action::Command("echo {value}".into())
         );
         assert!(parse_config("pitch = key 29").is_err());
+
+        let trigger = MidiTrigger::Control(1);
+        let mut continuous = HashMap::new();
+        assert_eq!(
+            queue_continuous_command(&mut continuous, trigger.clone(), (10, "value 10".into())),
+            Some((10, "value 10".into()))
+        );
+        assert_eq!(
+            queue_continuous_command(&mut continuous, trigger.clone(), (20, "value 20".into())),
+            None
+        );
+        queue_continuous_command(&mut continuous, trigger.clone(), (30, "value 30".into()));
+        assert_eq!(
+            finish_continuous_command(&mut continuous, &trigger),
+            Some((30, "value 30".into()))
+        );
+        assert_eq!(finish_continuous_command(&mut continuous, &trigger), None);
+        assert!(!continuous.contains_key(&trigger));
 
         let (sender, receiver) = mpsc::channel();
         for (note, pressed) in [(61, true), (60, true), (60, false), (61, false)] {
