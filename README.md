@@ -49,9 +49,9 @@ Setup saves `commands.conf` and waits for the next MIDI trigger. Press Ctrl+C wh
 Print each pressed MIDI note number without running any mappings:
 
 ```sh
-midi-hook test
+cargo run --release -- test
 # Optional MIDI port index:
-midi-hook test 0
+# midi-hook test 0
 ```
 
 Press Enter to stop.
