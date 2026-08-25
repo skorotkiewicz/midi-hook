@@ -1,7 +1,9 @@
 mod keyboard;
 mod named_key_code;
 
-use keyboard::{capture_keyboard_action, choose_keyboard, run_held_key, run_shortcut};
+use keyboard::{
+    capture_keyboard_action, choose_keyboard, prepare_output, run_held_key, run_shortcut,
+};
 use midir::{Ignore, MidiInput};
 use named_key_code::parse_shortcut;
 use std::collections::{HashMap, HashSet};
@@ -388,6 +390,19 @@ fn trigger_label(trigger: &MidiTrigger) -> String {
 fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
     if config.actions.is_empty() {
         return Err("config contains no mappings; run `midi-hook setup`".into());
+    }
+    let mut output_codes = HashSet::new();
+    for action in config.actions.values() {
+        match action {
+            Action::HeldKey(code) => {
+                output_codes.insert(*code);
+            }
+            Action::Shortcut(events) => output_codes.extend(events.iter().map(|(code, _)| *code)),
+            Action::Command(_) => {}
+        }
+    }
+    if !output_codes.is_empty() {
+        prepare_output(&output_codes.into_iter().collect::<Vec<_>>())?;
     }
     let mut input = MidiInput::new("midi-hook").map_err(|error| error.to_string())?;
     input.ignore(Ignore::None);

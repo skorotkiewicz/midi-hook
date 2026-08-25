@@ -14,7 +14,7 @@ Setup reads the keyboard from `/dev/input`. Add your user to the `input` group, 
 sudo usermod -aG input "$USER"
 ```
 
-Keyboard playback requires `ydotoold`.
+Keyboard playback uses the kernel `uinput` interface directly. Ensure your user can write to `/dev/uinput`; no playback daemon is required.
 
 ### Windows
 

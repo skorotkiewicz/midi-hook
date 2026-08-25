@@ -43,6 +43,10 @@ pub(crate) fn capture_keyboard_action(_: &Keyboard) -> Result<Option<String>, St
     }
 }
 
+pub(crate) fn prepare_output(_: &[u16]) -> Result<(), String> {
+    Ok(())
+}
+
 pub(crate) fn run_held_key(code: u16, pressed: bool) -> Result<(), String> {
     let mut flags = if pressed { 0 } else { KEYEVENTF_KEYUP };
     if matches!(

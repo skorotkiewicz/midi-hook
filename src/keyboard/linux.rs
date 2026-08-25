@@ -1,9 +1,12 @@
 use super::{Capture, RawMode, terminal_escape_pressed};
 use crate::prompt;
-use evdev::{Device, EventSummary, KeyCode, enumerate};
+use evdev::{
+    AttributeSet, Device, EventSummary, EventType, InputEvent, KeyCode, enumerate,
+    uinput::VirtualDevice,
+};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 
 pub(crate) type Keyboard = PathBuf;
@@ -11,14 +14,14 @@ pub(crate) type Keyboard = PathBuf;
 pub(crate) fn choose_keyboard() -> Result<Keyboard, String> {
     let keyboards: Vec<_> = enumerate()
         .filter(|(_, device)| {
-            !device
-                .name()
-                .is_some_and(|name| name.to_ascii_lowercase().contains("ydotool"))
-                && device.supported_keys().is_some_and(|keys| {
-                    keys.contains(KeyCode::KEY_A)
-                        && keys.contains(KeyCode::KEY_ENTER)
-                        && keys.contains(KeyCode::KEY_SPACE)
-                })
+            !device.name().is_some_and(|name| {
+                let name = name.to_ascii_lowercase();
+                name.contains("ydotool") || name.contains("midi-hook virtual keyboard")
+            }) && device.supported_keys().is_some_and(|keys| {
+                keys.contains(KeyCode::KEY_A)
+                    && keys.contains(KeyCode::KEY_ENTER)
+                    && keys.contains(KeyCode::KEY_SPACE)
+            })
         })
         .map(|(path, device)| {
             let name = device.name().unwrap_or("unknown keyboard").to_owned();
@@ -77,36 +80,51 @@ pub(crate) fn capture_keyboard_action(path: &Path) -> Result<Option<String>, Str
     }
 }
 
-fn run_ydotool(events: Vec<String>) -> Result<(), String> {
-    match Command::new("ydotool")
-        .arg("key")
-        .args(&events)
-        .stdin(Stdio::null())
-        .status()
-    {
-        Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(format!(
-            "ydotool failed ({status}): key {}",
-            events.join(" ")
-        )),
-        Err(error) => Err(format!("could not run ydotool: {error}")),
+static VIRTUAL_KEYBOARD: OnceLock<Mutex<Option<VirtualDevice>>> = OnceLock::new();
+
+fn with_virtual_keyboard(
+    operation: impl FnOnce(&mut VirtualDevice) -> std::io::Result<()>,
+) -> Result<(), String> {
+    let mut device = VIRTUAL_KEYBOARD
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| "virtual keyboard lock is poisoned".to_owned())?;
+    operation(device.as_mut().ok_or("virtual keyboard was not prepared")?)
+        .map_err(|error| error.to_string())
+}
+
+fn emit(events: &[(u16, i32)]) -> Result<(), String> {
+    let events: Vec<_> = events
+        .iter()
+        .map(|(code, value)| InputEvent::new(EventType::KEY.0, *code, *value))
+        .collect();
+    with_virtual_keyboard(|device| device.emit(&events))
+}
+
+pub(crate) fn prepare_output(codes: &[u16]) -> Result<(), String> {
+    let mut keys = AttributeSet::<KeyCode>::new();
+    for code in codes {
+        keys.insert(KeyCode::new(*code));
     }
+    let device = VirtualDevice::builder()
+        .and_then(|builder| builder.name("midi-hook virtual keyboard").with_keys(&keys))
+        .and_then(|builder| builder.build())
+        .map_err(|error| format!("could not create /dev/uinput keyboard: {error}"))?;
+    *VIRTUAL_KEYBOARD
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| "virtual keyboard lock is poisoned".to_owned())? = Some(device);
+    Ok(())
 }
 
 pub(crate) fn run_held_key(code: u16, pressed: bool) -> Result<(), String> {
-    run_ydotool(vec![format!("{code}:{}", u8::from(pressed))])
+    emit(&[(code, i32::from(pressed))])
 }
 
 pub(crate) fn run_shortcut(events: &[(u16, i32)]) {
-    let events = events
-        .iter()
-        .map(|(code, value)| format!("{code}:{value}"))
-        .collect();
-    thread::spawn(move || {
-        if let Err(error) = run_ydotool(events) {
-            eprintln!("{error}");
-        }
-    });
+    if let Err(error) = emit(events) {
+        eprintln!("{error}");
+    }
 }
 
 pub(crate) fn named_key_code(name: &str) -> Option<u16> {
