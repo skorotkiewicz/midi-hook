@@ -1,3 +1,6 @@
+#[cfg(target_os = "linux")]
+mod shortcut;
+
 use midir::{Ignore, MidiInput};
 use std::collections::HashMap;
 use std::env;
@@ -174,7 +177,18 @@ fn read_config(path: &Path) -> Result<String, String> {
     }
 }
 
-fn setup(path: &Path) -> Result<Config, String> {
+fn capture_shortcut_command() -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        shortcut::capture_ydotool_command()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err("keyboard shortcut recording requires Linux and ydotool".into())
+    }
+}
+
+fn setup(path: &Path, record_shortcut: bool) -> Result<Config, String> {
     let mut input = MidiInput::new("midi-hook-setup").map_err(|error| error.to_string())?;
     input.ignore(Ignore::None);
     let port_index = choose_port(&input, None, None)?;
@@ -205,12 +219,18 @@ fn setup(path: &Path) -> Result<Config, String> {
     drop(connection);
     println!("Learned MIDI note {note}.");
 
-    let command = loop {
-        let command = prompt("Command: ")?;
-        if !command.is_empty() {
-            break command;
+    let command = if record_shortcut {
+        let command = capture_shortcut_command()?;
+        println!("Recorded command: {command}");
+        command
+    } else {
+        loop {
+            let command = prompt("Command: ")?;
+            if !command.is_empty() {
+                break command;
+            }
+            eprintln!("Command cannot be empty");
         }
-        eprintln!("Command cannot be empty");
     };
     let existing = read_config(path)?;
     let updated = update_config(&existing, &device, note, &command)?;
@@ -265,14 +285,18 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
 fn run() -> Result<(), String> {
     let mut args = env::args().skip(1);
     let first = args.next().ok_or(
-        "usage: midi-hook setup [commands.conf]\n       midi-hook <commands.conf> [port-index]",
+        "usage: midi-hook setup [commands.conf]\n       midi-hook setup-key [commands.conf]\n       midi-hook <commands.conf> [port-index]",
     )?;
-    if first == "setup" || first == "--setup" {
+    if matches!(first.as_str(), "setup" | "--setup" | "setup-key") {
+        #[cfg(not(target_os = "linux"))]
+        if first == "setup-key" {
+            return Err("keyboard shortcut recording requires Linux and ydotool".into());
+        }
         let path = args.next().unwrap_or_else(|| "commands.conf".into());
         if args.next().is_some() {
-            return Err("usage: midi-hook setup [commands.conf]".into());
+            return Err(format!("usage: midi-hook {first} [commands.conf]"));
         }
-        return listen(setup(Path::new(&path))?, None);
+        return listen(setup(Path::new(&path), first == "setup-key")?, None);
     }
 
     let requested_port = args.next();

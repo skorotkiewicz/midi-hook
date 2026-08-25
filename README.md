@@ -48,7 +48,15 @@ MIDI Hook does not let commands read its terminal input. Start interactive comma
 
 ## Use MIDI keys as computer keys
 
-On Linux with Wayland, `ydotool` can send normal keyboard input:
+On Linux, the shortcut wizard records a computer key or shortcut and creates the `ydotool` command:
+
+```sh
+cargo run --release -- setup-key
+```
+
+Select the MIDI key first. Then press a computer key or shortcut such as Ctrl+C. The wizard saves the mapping and starts listening.
+
+`ydotool` works with X11 and Wayland. Generated mappings look like this:
 
 ```text
 60 = ydotool key 57:1 57:0           # Space
