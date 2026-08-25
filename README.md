@@ -54,6 +54,14 @@ cargo run --release -- test
 # midi-hook test 0
 ```
 
+Detailed diagnostics:
+
+```sh
+cargo run --release -- test --details
+# Optional MIDI port index:
+# midi-hook test --details 0
+```
+
 Press Enter to stop.
 
 ## Listen

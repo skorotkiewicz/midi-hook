@@ -1,9 +1,11 @@
 mod keyboard;
+mod midi_monitor;
 mod shortcut;
 
 use keyboard::{
     capture_keyboard_action, choose_keyboard, prepare_output, run_held_key, run_shortcut,
 };
+use midi_monitor::test_midi;
 use midir::{Ignore, MidiInput};
 use shortcut::parse_shortcut;
 use std::collections::{HashMap, HashSet};
@@ -386,11 +388,7 @@ fn trigger_notes(trigger: &MidiTrigger) -> &[u8] {
     }
 }
 
-fn trigger_label(trigger: &MidiTrigger) -> String {
-    let (notes, separator) = match trigger {
-        MidiTrigger::Chord(notes) => (notes, "+"),
-        MidiTrigger::Sequence(notes) => (notes, ">"),
-    };
+fn note_numbers(notes: &[u8], separator: &str) -> String {
     notes
         .iter()
         .map(u8::to_string)
@@ -398,34 +396,11 @@ fn trigger_label(trigger: &MidiTrigger) -> String {
         .join(separator)
 }
 
-fn test_midi(requested_port: Option<&str>) -> Result<(), String> {
-    let mut input = MidiInput::new("midi-hook-test").map_err(|error| error.to_string())?;
-    input.ignore(Ignore::None);
-    let port_index = choose_midi_port(&input, requested_port, None)?;
-    let ports = input.ports();
-    let port = ports.get(port_index).ok_or("MIDI input disappeared")?;
-    let port_name = input
-        .port_name(port)
-        .unwrap_or_else(|_| "unknown device".into());
-    let connection = input
-        .connect(
-            port,
-            "midi-hook-test",
-            move |_, message, _| {
-                if let Some((note, true)) = midi_note(message) {
-                    println!("{note}");
-                }
-            },
-            (),
-        )
-        .map_err(|error| error.to_string())?;
-    println!("Testing {port_name}. Press MIDI notes; press Enter to quit.");
-    let mut line = String::new();
-    io::stdin()
-        .read_line(&mut line)
-        .map_err(|error| error.to_string())?;
-    drop(connection);
-    Ok(())
+fn trigger_label(trigger: &MidiTrigger) -> String {
+    match trigger {
+        MidiTrigger::Chord(notes) => note_numbers(notes, "+"),
+        MidiTrigger::Sequence(notes) => note_numbers(notes, ">"),
+    }
 }
 
 fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
@@ -578,7 +553,7 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
 fn run() -> Result<(), String> {
     let mut args = env::args().skip(1);
     let first = args.next().ok_or(
-        "usage: midi-hook setup [commands.conf]\n       midi-hook test [port-index]\n       midi-hook <commands.conf> [port-index]",
+        "usage: midi-hook setup [commands.conf]\n       midi-hook test [--details] [port-index]\n       midi-hook <commands.conf> [port-index]",
     )?;
     if matches!(first.as_str(), "setup" | "--setup") {
         let path = args.next().unwrap_or_else(|| "commands.conf".into());
@@ -588,11 +563,15 @@ fn run() -> Result<(), String> {
         return setup(Path::new(&path));
     }
     if first == "test" {
-        let requested_port = args.next();
-        if args.next().is_some() {
-            return Err("usage: midi-hook test [port-index]".into());
+        let mut requested_port = args.next();
+        let details = requested_port.as_deref() == Some("--details");
+        if details {
+            requested_port = args.next();
         }
-        return test_midi(requested_port.as_deref());
+        if args.next().is_some() {
+            return Err("usage: midi-hook test [--details] [port-index]".into());
+        }
+        return test_midi(requested_port.as_deref(), details);
     }
     let requested_port = args.next();
     if args.next().is_some() {
