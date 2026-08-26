@@ -1,0 +1,15 @@
+[Unit]
+Description=Map MIDI input to keyboard actions and commands
+After=graphical-session.target sound.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.config/midi-hook
+ExecStart=/usr/bin/midi-hook %h/.config/midi-hook/commands.conf
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGINT
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target

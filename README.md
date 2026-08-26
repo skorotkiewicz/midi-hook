@@ -74,6 +74,25 @@ cargo run --release -- commands.conf
 
 The listener connects to the saved MIDI device. Press Enter to stop it.
 
+### Start automatically on Linux
+
+Packaged Linux releases include an optional systemd user service. Store the configuration in the expected location, then enable it:
+
+```sh
+mkdir -p ~/.config/midi-hook
+cp commands.conf ~/.config/midi-hook/commands.conf
+systemctl --user enable --now midi-hook
+```
+
+View logs or stop the service with:
+
+```sh
+journalctl --user -u midi-hook -f
+systemctl --user stop midi-hook
+```
+
+The package installs the service but never enables it automatically. When stdin is not interactive, MIDI Hook waits for SIGINT instead of exiting on EOF.
+
 ## Configuration
 
 ```text

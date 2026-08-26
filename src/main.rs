@@ -14,7 +14,7 @@ use shortcut::parse_shortcut;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::io::{self, ErrorKind, Write};
+use std::io::{self, ErrorKind, IsTerminal, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
@@ -1032,15 +1032,19 @@ fn listen(config: Config, requested_port: Option<&str>) -> Result<(), String> {
             (),
         )
         .map_err(|error| error.to_string())?;
-    println!("Listening on {port_name}. Press Enter to quit.");
-    thread::spawn(move || {
-        let mut line = String::new();
-        let result = io::stdin()
-            .read_line(&mut line)
-            .map(|_| ())
-            .map_err(|error| error.to_string());
-        let _ = shutdown_sender.send(result);
-    });
+    if io::stdin().is_terminal() {
+        println!("Listening on {port_name}. Press Enter to quit.");
+        thread::spawn(move || {
+            let mut line = String::new();
+            let result = io::stdin()
+                .read_line(&mut line)
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            let _ = shutdown_sender.send(result);
+        });
+    } else {
+        println!("Listening on {port_name}.");
+    }
     shutdown_receiver
         .recv()
         .map_err(|_| "shutdown listener stopped unexpectedly".to_owned())??;

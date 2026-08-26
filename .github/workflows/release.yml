@@ -54,6 +54,9 @@ jobs:
           cp ../target/${{ matrix.target }}/release/midi-hook midi-hook
           cp ../README.md README.md
           cp ../commands.conf.example commands.conf.example
+          if [[ "${{ matrix.target }}" == *linux* ]]; then
+            cp ../assets/midi-hook.service midi-hook.service
+          fi
           tar czf ../midi-hook-${{ github.ref_name }}-${{ matrix.target }}.tar.gz *
 
       - name: Package (Windows)
