@@ -1,10 +1,15 @@
 # https://github.com/casey/just
+PACKAGE_VERSION := `grep '^version' Cargo.toml | head -1 | cut -d'"' -f2`
+
+[private]
+sync-doc-version:
+    @sed -i -E 's|(<span class="brand-tag">)v[^<]+|\1v{{ PACKAGE_VERSION }}|' docs/index.html
 
 [private]
 default:
     @just --list
 
-build:
+build: sync-doc-version
     cargo build --release
 
 build-all:
@@ -16,7 +21,7 @@ run *args:
 fmt:
     cargo fmt
     cargo clippy --all-targets --all-features -- -D warnings
-    # cargo shear --fix # cargo install shear
+    @ # cargo shear --fix # cargo install shear
 
 check:
     cargo fmt --check
@@ -33,12 +38,9 @@ remove-hook:
     @rm .git/hooks/pre-commit
 
 add-tag:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
     git push origin main
-    git tag -a "v${VERSION}" -m "Release v${VERSION}"
-    git push origin "v${VERSION}"
+    git tag -a "v{{ PACKAGE_VERSION }}" -m "Release v{{ PACKAGE_VERSION }}"
+    git push origin "v{{ PACKAGE_VERSION }}"
 
 # `just remove-tag v0.0.0` or `just remove-tag` (uses fzf)
 remove-tag VERSION="":
