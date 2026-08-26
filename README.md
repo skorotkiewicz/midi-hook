@@ -38,6 +38,7 @@ Select a MIDI input, an optional MIDI output for LED feedback, and, on Linux, a 
 s  Press and release a physical shortcut
 t  Type a shortcut such as ctrl+space+f4+c
 c  Type a shell command
+g  Type a toggle command
 ```
 
 For a shortcut, hold all keys at the same time, then release them. Setup records the exact press and release sequence. MIDI Hook holds a single captured key, such as Ctrl, until you release the MIDI trigger. Press Esc to cancel capture if you selected the wrong keyboard.
