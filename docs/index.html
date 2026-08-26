@@ -9,16 +9,16 @@
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
     :root {
-      --bg: #1a1a1a;
+      --bg: #09090b;
       --surface: #111111;
       --surface-hover: #161616;
-      --border: #2a2a2a;
-      --border-subtle: #222222;
+      --border: #27272a;
+      --border-subtle: #1f1f23;
 
-      --text: #d4d4d4;
+      --text: #f4f4f5;
       --text-bright: #f0f0f0;
-      --text-muted: #888888;
-      --text-dim: #555555;
+      --text-muted: #a1a1aa;
+      --text-dim: #71717a;
 
       --code-green: #6a9955;
       --code-device: #9cdcfe;
@@ -26,11 +26,11 @@
       --code-action: #ce9178;
       --code-val: #c3e88d;
 
-      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, Helvetica, Arial, sans-serif;
-      --mono: 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+      --font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }
 
-    html { scroll-behavior: smooth; }
+    html { scroll-behavior: smooth; color-scheme: dark; }
 
     body {
       font-family: var(--font);
@@ -38,15 +38,19 @@
       color: var(--text);
       line-height: 1.6;
       -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
     }
 
     a { color: var(--text); text-decoration: none; transition: color 0.15s; }
     a:hover { color: var(--text-bright); }
 
     .container {
-      max-width: 860px;
+      width: 100%;
+      max-width: 1040px;
       margin: 0 auto;
-      padding: 0 28px;
+      padding: 0 24px;
+      position: relative;
+      z-index: 1;
     }
 
     /* Nav */
@@ -388,8 +392,16 @@
 
     @media (max-width: 600px) {
       .hero h1 { font-size: 2.2rem; }
-      .terminal-body { font-size: 0.72rem; padding: 16px; }
+      .brand { white-space: nowrap; }
       .nav-links { gap: 16px; }
+      .nav-links a:nth-child(1),
+      .nav-links a:nth-child(2),
+      .nav-links a:nth-child(3),
+      .nav-links a:nth-child(5) { display: none; }
+      .terminal-controls, .terminal-title { display: none; }
+      .terminal-tab-group { width: 100%; overflow-x: auto; }
+      .terminal-tab { flex: 0 0 auto; white-space: nowrap; }
+      .terminal-body { font-size: 0.72rem; padding: 16px; }
       .footer-content { flex-direction: column; text-align: center; }
     }
   </style>
@@ -400,13 +412,14 @@
     <div class="container">
       <nav>
         <div class="brand">
-          MIDI Hook <span class="brand-tag">v0.4</span>
+          MIDI Hook <span class="brand-tag">v0.4.2</span>
         </div>
         <div class="nav-links">
           <a href="#features">Features</a>
           <a href="#platforms">Platforms</a>
           <a href="https://aur.archlinux.org/packages/midi-hook" target="_blank" rel="noopener">AUR</a>
-          <a href="https://github.com/skorotkiewicz/midi-hook/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/skorotkiewicz/midi-hook/releases/latest" target="_blank" rel="noopener">Binaries</a>
+          <a href="https://github.com/skorotkiewicz/midi-hook/blob/main/REFERENCE.md" target="_blank" rel="noopener">Reference</a>
           <a href="https://github.com/skorotkiewicz/midi-hook" target="_blank" rel="noopener">GitHub</a>
         </div>
       </nav>
@@ -419,17 +432,16 @@
       <!--<h1>MIDI Hook</h1>
       <p>Map MIDI notes, chords, sequences, pedals, knobs, faders, and pitch bend to keyboard actions or shell commands.</p>-->
       <h1>Your MIDI controller,<br>now a command center.</h1>
-      <p>Map notes, chords, sequences, knobs, faders, and pedals to keyboard shortcuts or shell commands across Linux, Windows, and macOS.</p>
+      <p>Map notes, chords, sequences, knobs, faders, pedals, and pitch bend to keyboard shortcuts or shell commands across Linux, Windows, and macOS.</p>
 
       <div class="hero-actions">
-        <div class="install-box" onclick="navigator.clipboard.writeText('yay -S midi-hook'); const b=this.querySelector('.copy-hint'); b.textContent='Copied!'; setTimeout(()=>b.textContent='Click to copy', 2000)">
+        <button type="button" class="install-box" onclick="navigator.clipboard.writeText('yay -S midi-hook'); const b=this.querySelector('.copy-hint'); b.textContent='Copied!'; setTimeout(()=>b.textContent='Click to copy', 2000)">
           <span class="prompt">$</span> yay -S midi-hook
           <span class="copy-hint">Click to copy</span>
-        </div>
-        <div class="install-box" onclick="navigator.clipboard.writeText('cargo build --release'); const b=this.querySelector('.copy-hint'); b.textContent='Copied!'; setTimeout(()=>b.textContent='Click to copy', 2000)">
-          <span class="prompt">$</span> cargo build --release
-          <span class="copy-hint">Click to copy</span>
-        </div>
+        </button>
+        <a class="install-box" href="https://github.com/skorotkiewicz/midi-hook/releases/latest" target="_blank" rel="noopener">
+          Download latest binaries
+        </a>
       </div>
 
       <!-- Terminal -->
@@ -492,6 +504,7 @@
 <span class="t-comment"># Knobs, Faders &amp; Continuous Controls</span>
 <span class="t-note">cc 76</span>          <span class="t-out">=</span> <span class="t-action">command</span>  <span class="t-value">wpctl set-volume @DEFAULT_SINK@ {percent}%</span>
 <span class="t-note">cc 75</span>          <span class="t-out">=</span> <span class="t-action">command</span>  <span class="t-value">brightnessctl set {percent}%</span>
+<span class="t-note">pitch</span>          <span class="t-out">=</span> <span class="t-action">command</span>  <span class="t-value">echo "pitch {value}"</span>
 
 <span class="t-comment"># Velocity Ranges</span>
 <span class="t-note">43</span> <span class="t-value">[vel=1..49]</span>   <span class="t-out">=</span> <span class="t-action">command</span>  <span class="t-value">notify-send "Soft press"</span>
@@ -632,10 +645,11 @@
   <footer>
     <div class="container">
       <div class="footer-content">
-        <div>midi-hook — Open Source under MIT/Apache</div>
+        <div>midi-hook — Open source under the MIT license</div>
         <div class="footer-links">
           <a href="https://aur.archlinux.org/packages/midi-hook" target="_blank" rel="noopener">AUR</a>
-          <a href="https://github.com/skorotkiewicz/midi-hook/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/skorotkiewicz/midi-hook/releases/latest" target="_blank" rel="noopener">Binaries</a>
+          <a href="https://github.com/skorotkiewicz/midi-hook/blob/main/REFERENCE.md" target="_blank" rel="noopener">Reference</a>
           <a href="https://github.com/skorotkiewicz/midi-hook" target="_blank" rel="noopener">GitHub</a>
         </div>
       </div>
