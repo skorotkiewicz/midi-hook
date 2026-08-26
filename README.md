@@ -8,14 +8,14 @@ Map MIDI notes to physical keyboard shortcuts, held keys, or shell commands on L
 
 ### Linux
 
-Setup reads the keyboard from `/dev/input`. Add your user to the `input` group, then log out and back in:
+On Linux, setup captures keyboard input through `/dev/input`. Add your user to the `input` group, then log out and back in:
 
 ```sh
 yay -S midi-hook # Arch Linux
 sudo usermod -aG input "$USER"
 ```
 
-Keyboard playback uses the kernel `uinput` interface directly. Ensure your user can write to `/dev/uinput`; no playback daemon is required.
+Keyboard playback uses the kernel `uinput` interface. Make sure your user can write to `/dev/uinput`. MIDI Hook does not need a playback daemon.
 
 ### Windows
 
@@ -23,7 +23,7 @@ No extra keyboard software is required. MIDI Hook uses the native `SendInput` AP
 
 ### macOS
 
-Grant your terminal or MIDI Hook Input Monitoring permission for capture and Accessibility permission for keyboard playback in System Settings → Privacy & Security.
+In System Settings → Privacy & Security, grant your terminal or MIDI Hook two permissions: Input Monitoring for capture and Accessibility for keyboard playback.
 
 ## Setup
 
@@ -32,7 +32,7 @@ cargo run --release -- setup
 # midi-hook setup
 ```
 
-Select a MIDI input, an optional MIDI output for LED feedback, and, on Linux, a physical keyboard. Use a MIDI control, or hold one or more MIDI notes and release them all. For multiple notes, choose whether they are an unordered chord or ordered sequence. Next choose:
+Select a MIDI input, an optional MIDI output for LED feedback, and, on Linux, a physical keyboard. Move a MIDI control, or hold one or more MIDI notes and release them. For multiple notes, choose an unordered chord or an ordered sequence. Then choose an action:
 
 ```text
 s  Press and release a physical shortcut
@@ -40,9 +40,9 @@ t  Type a shortcut such as ctrl+space+f4+c
 c  Type a shell command
 ```
 
-Hold all keys in a shortcut at the same time, then release them. Setup records the exact press/release sequence. A single captured key, such as Ctrl, is held until the MIDI trigger is released. Press Esc to cancel physical capture if you selected the wrong keyboard.
+For a shortcut, hold all keys at the same time, then release them. Setup records the exact press and release sequence. MIDI Hook holds a single captured key, such as Ctrl, until you release the MIDI trigger. Press Esc to cancel capture if you selected the wrong keyboard.
 
-Setup saves `commands.conf` and waits for the next MIDI trigger. Press Ctrl+C while it waits to exit.
+Setup saves each mapping to `commands.conf`, then waits for another MIDI trigger. Press Ctrl+C while it waits to exit.
 
 ## Test MIDI input
 
@@ -93,8 +93,20 @@ cc 76 = command wpctl set-volume @DEFAULT_SINK@ {value}%
 pitch = command echo "{value}"
 ```
 
-A `+`-separated MIDI trigger runs once when all listed MIDI notes are held. It re-arms when any required note is released. A `>`-separated trigger requires note-on events in exactly that order; a wrong note resets progress. Single-note velocity conditions use inclusive ranges such as `65 [vel=50..99]`; NoteOff releases held-key and LED state. Velocity ranges must use values from 1 through 127. Chords and sequences ignore velocity. `cc N` activates held keys and shortcuts when control N has a value from 1 through 127 and releases them at 0. CC commands run for every nonzero value. Use `{value}` for the raw `0–127` CC value or `{percent}` for a scaled `0–100` value; parameterized commands also run at 0. This supports absolute knobs and faders. A `pitch` command uses the same placeholders with a raw range of `0–16383` and a scaled range of `0–100`. CC and pitch commands run one at a time per mapping; while a command is running, intermediate updates are replaced by the newest value. Sequences have no timeout. Single-note mappings still run independently.
+A `+`-separated trigger runs once when you hold all listed MIDI notes. Releasing any required note re-arms it. A `>`-separated trigger requires note-on events in the listed order. A wrong note resets the sequence, and sequences have no timeout. Single-note mappings continue to run independently.
 
-When `output` is configured, active note mappings send MIDI NoteOn feedback and send NoteOff when released. This can drive controller LEDs. Sequences and CC mappings do not send LED feedback.
+Single-note velocity conditions use inclusive ranges such as `65 [vel=50..99]`. Ranges must use values from 1 through 127. Chords and sequences ignore velocity. NoteOff releases held keys and LED state.
 
-Manual keyboard shortcuts can use `+`-separated key names. Captured shortcuts and `key` actions store native key codes, so numeric mappings are not portable between operating systems. Commands run through `/bin/sh -c` on Linux/macOS and `cmd.exe /C` on Windows. Commands should terminate or detach themselves; MIDI Hook does not impose a timeout. A `toggle` action starts its command on the first trigger and stops its process tree on the next. MIDI Hook also stops active toggle commands when it exits. Launch the application executable directly; MIDI Hook does not kill an instance that was already running or a launcher that deliberately detaches. Only use configuration files you trust.
+A `cc N` mapping activates held keys and shortcuts when control N has a value from 1 through 127, then releases them at 0. CC commands run for every nonzero value. Use `{value}` for the raw CC value from 0 to 127 or `{percent}` for a scaled value from 0 to 100. Commands with either placeholder also run at 0, which supports absolute knobs and faders.
+
+A `pitch` command uses the same placeholders. Its raw range is 0 to 16383, and its scaled range is 0 to 100. MIDI Hook runs one CC or pitch command at a time per mapping. If another update arrives while the command is running, only the newest value remains queued.
+
+When you configure `output`, active note mappings send MIDI NoteOn feedback. They send NoteOff when released. This can control controller LEDs. Sequences and CC mappings do not send LED feedback.
+
+Manual keyboard shortcuts can use `+`-separated key names. Captured shortcuts and `key` actions store native key codes, so numeric mappings do not work across operating systems.
+
+Commands run through `/bin/sh -c` on Linux and macOS, and `cmd.exe /C` on Windows. Commands must terminate or detach themselves because MIDI Hook does not impose a timeout.
+
+A `toggle` action starts its command on the first trigger and stops its process tree on the next. MIDI Hook also stops active toggle commands when it exits. Launch the application executable directly. MIDI Hook does not kill an instance that was already running or a launcher that deliberately detaches.
+
+Only use configuration files you trust.
