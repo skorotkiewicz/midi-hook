@@ -2,6 +2,10 @@
 
 # MIDI Hook
 
+[![Release](https://img.shields.io/github/v/release/skorotkiewicz/midi-hook)](https://github.com/skorotkiewicz/midi-hook/releases/latest)
+[![Build](https://github.com/skorotkiewicz/midi-hook/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/skorotkiewicz/midi-hook/actions/workflows/release.yml)
+[![AUR](https://img.shields.io/aur/version/midi-hook)](https://aur.archlinux.org/packages/midi-hook)
+
 Map MIDI notes, chords, sequences, pedals, knobs, faders, and pitch bend to keyboard actions or shell commands on Linux, Windows, and macOS.
 
 ## Install
