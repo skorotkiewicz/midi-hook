@@ -53,6 +53,7 @@ jobs:
           mkdir dist && cd dist
           cp ../target/${{ matrix.target }}/release/midi-hook midi-hook
           cp ../README.md README.md
+          cp ../REFERENCE.md REFERENCE.md
           cp ../commands.conf.example commands.conf.example
           if [[ "${{ matrix.target }}" == *linux* ]]; then
             cp ../assets/midi-hook.service midi-hook.service
@@ -65,6 +66,7 @@ jobs:
           mkdir dist
           copy target\${{ matrix.target }}\release\midi-hook.exe dist\midi-hook.exe
           copy README.md dist\README.md
+          copy REFERENCE.md dist\REFERENCE.md
           copy commands.conf.example dist\commands.conf.example
           cd dist && 7z a ..\midi-hook-${{ github.ref_name }}-${{ matrix.target }}.zip *
 

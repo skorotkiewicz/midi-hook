@@ -19,6 +19,7 @@ sha256sums_aarch64=('SKIP')
 package() {
   install -Dm755 midi-hook "$pkgdir/usr/bin/midi-hook"
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 REFERENCE.md "$pkgdir/usr/share/doc/$pkgname/REFERENCE.md"
   install -Dm644 commands.conf.example "$pkgdir/usr/share/doc/$pkgname/commands.conf.example"
   install -Dm644 midi-hook.service "$pkgdir/usr/lib/systemd/user/midi-hook.service"
 }
