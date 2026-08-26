@@ -32,7 +32,7 @@ cargo run --release -- setup
 # midi-hook setup
 ```
 
-Select a MIDI input and, on Linux, a physical keyboard. Hold one or more MIDI notes, release them all, then choose whether multiple notes are an unordered chord or ordered sequence. Next choose:
+Select a MIDI input, an optional MIDI output for LED feedback, and, on Linux, a physical keyboard. Use a MIDI control, or hold one or more MIDI notes and release them all. For multiple notes, choose whether they are an unordered chord or ordered sequence. Next choose:
 
 ```text
 s  Press and release a physical shortcut
@@ -54,7 +54,7 @@ cargo run --release -- test
 # midi-hook test 0
 ```
 
-Detailed diagnostics:
+Detailed diagnostics print every incoming MIDI message as hexadecimal bytes, including SysEx, clock, pitch bend, aftertouch, and unknown messages. Note messages also show the decoded held-note state and arrival order:
 
 ```sh
 cargo run --release -- test --details
@@ -71,20 +71,30 @@ cargo run --release -- commands.conf
 # midi-hook commands.conf
 ```
 
-The listener reconnects to the saved MIDI device. Press Enter to stop it.
+The listener connects to the saved MIDI device. Press Enter to stop it.
 
 ## Configuration
 
 ```text
 device = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
+output = RockJam BT MIDI:RockJam BT MIDI Bluetooth 128:0
 60 = shortcut 57:1 35:1 35:0 57:0
 61 = shortcut ctrl+space+f4+c
 62 = key 29
 63 = command notify-send "MIDI note 63"
+64 = toggle spotify
+65 [vel=1..49] = command notify-send "Soft press"
+65 [vel=50..99] = command notify-send "Middle press"
+65 [vel=100..127] = command notify-send "Hard press"
 60+61+62 = command notify-send "MIDI chord pressed"
 48>50>52 = command notify-send "MIDI sequence entered"
+cc 64 = key 29
+cc 76 = command wpctl set-volume @DEFAULT_SINK@ {value}%
+pitch = command echo "{value}"
 ```
 
-A `+`-separated MIDI trigger runs once when all listed MIDI notes are held. It re-arms when any required note is released. A `>`-separated trigger requires note-on events in exactly that order; a wrong note resets progress. Sequences have no timeout. Single-note mappings still run independently.
+A `+`-separated MIDI trigger runs once when all listed MIDI notes are held. It re-arms when any required note is released. A `>`-separated trigger requires note-on events in exactly that order; a wrong note resets progress. Single-note velocity conditions use inclusive ranges such as `65 [vel=50..99]`; NoteOff releases held-key and LED state. Velocity ranges must use values from 1 through 127. Chords and sequences ignore velocity. `cc N` activates held keys and shortcuts when control N has a value from 1 through 127 and releases them at 0. CC commands run for every nonzero value. Use `{value}` for the raw `0–127` CC value or `{percent}` for a scaled `0–100` value; parameterized commands also run at 0. This supports absolute knobs and faders. A `pitch` command uses the same placeholders with a raw range of `0–16383` and a scaled range of `0–100`. CC and pitch commands run one at a time per mapping; while a command is running, intermediate updates are replaced by the newest value. Sequences have no timeout. Single-note mappings still run independently.
 
-Manual keyboard shortcuts can use `+`-separated key names. Captured shortcuts and `key` actions store native key codes, so numeric mappings are not portable between operating systems. Commands run through `/bin/sh -c` on Linux/macOS and `cmd.exe /C` on Windows. Only use configuration files you trust.
+When `output` is configured, active note mappings send MIDI NoteOn feedback and send NoteOff when released. This can drive controller LEDs. Sequences and CC mappings do not send LED feedback.
+
+Manual keyboard shortcuts can use `+`-separated key names. Captured shortcuts and `key` actions store native key codes, so numeric mappings are not portable between operating systems. Commands run through `/bin/sh -c` on Linux/macOS and `cmd.exe /C` on Windows. Commands should terminate or detach themselves; MIDI Hook does not impose a timeout. A `toggle` action starts its command on the first trigger and stops its process tree on the next. MIDI Hook also stops active toggle commands when it exits. Launch the application executable directly; MIDI Hook does not kill an instance that was already running or a launcher that deliberately detaches. Only use configuration files you trust.

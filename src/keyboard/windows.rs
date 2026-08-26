@@ -75,10 +75,13 @@ pub(crate) fn run_held_key(code: u16, pressed: bool) -> Result<(), String> {
 }
 
 pub(crate) fn run_shortcut(events: &[(u16, i32)]) {
-    for (code, value) in events {
+    for (index, (code, value)) in events.iter().enumerate() {
         if let Err(error) = run_held_key(*code, *value == 1) {
             eprintln!("{error}");
             break;
+        }
+        if index + 1 < events.len() {
+            thread::sleep(Duration::from_millis(5));
         }
     }
 }
@@ -97,13 +100,11 @@ pub(crate) fn named_key_code(name: &str) -> Option<u16> {
         name if name.len() == 1 && name.as_bytes()[0].is_ascii_alphabetic() => {
             Some(u16::from(name.as_bytes()[0].to_ascii_uppercase()))
         }
-        name if name
+        name => name
             .strip_prefix('f')
             .and_then(|number| number.parse::<u16>().ok())
-            .is_some_and(|number| (1..=12).contains(&number)) =>
-        {
-            Some(0x6f + name[1..].parse::<u16>().expect("validated function key"))
-        }
-        _ => name.trim().parse().ok(),
+            .filter(|number| (1..=12).contains(number))
+            .map(|number| 0x6f + number)
+            .or_else(|| name.parse().ok()),
     }
 }

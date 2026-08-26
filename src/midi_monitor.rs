@@ -40,6 +40,9 @@ pub(crate) fn test_midi(requested_port: Option<&str>, details: bool) -> Result<(
             port,
             "midi-hook-test",
             move |_, message, _| {
+                if details {
+                    println!("raw: {message:02X?}");
+                }
                 let Some((note, pressed)) = midi_note(message) else {
                     return;
                 };

@@ -56,6 +56,9 @@ pub(crate) fn capture_keyboard_action(path: &Path) -> Result<Option<String>, Str
     device
         .set_nonblocking(true)
         .map_err(|error| format!("could not poll keyboard {}: {error}", path.display()))?;
+    device
+        .grab()
+        .map_err(|error| format!("could not grab keyboard {}: {error}", path.display()))?;
     println!("Hold the shortcut keys, then release them all. Press Esc to cancel.");
     let _raw_mode = RawMode::enable()?;
     let mut capture = Capture::default();
@@ -63,10 +66,13 @@ pub(crate) fn capture_keyboard_action(path: &Path) -> Result<Option<String>, Str
         match device.fetch_events() {
             Ok(events) => {
                 for input_event in events {
-                    if let EventSummary::Key(_, key, value) = input_event.destructure()
-                        && capture.push(key.code(), value)
-                    {
-                        return Ok(Some(capture.action()));
+                    if let EventSummary::Key(_, key, value) = input_event.destructure() {
+                        if key == KeyCode::KEY_ESC && value == 1 {
+                            return Ok(None);
+                        }
+                        if capture.push(key.code(), value) {
+                            return Ok(Some(capture.action()));
+                        }
                     }
                 }
             }
@@ -122,8 +128,14 @@ pub(crate) fn run_held_key(code: u16, pressed: bool) -> Result<(), String> {
 }
 
 pub(crate) fn run_shortcut(events: &[(u16, i32)]) {
-    if let Err(error) = emit(events) {
-        eprintln!("{error}");
+    for (index, event) in events.iter().enumerate() {
+        if let Err(error) = emit(std::slice::from_ref(event)) {
+            eprintln!("{error}");
+            break;
+        }
+        if index + 1 < events.len() {
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 }
 

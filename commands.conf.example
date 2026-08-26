@@ -1,4 +1,6 @@
-device = Your MIDI device name
+device = Your MIDI input name
+# Optional controller output for LED feedback
+output = Your MIDI output name
 
 # Captured physical shortcut events
 60 = shortcut 57:1 35:1 35:0 57:0
@@ -8,3 +10,26 @@ device = Your MIDI device name
 
 # Shell command
 62 = command notify-send "MIDI note 62"
+
+# Start on the first trigger, stop on the next
+63 = toggle spotify
+
+# Inclusive NoteOn velocity ranges
+65 [vel=1..49] = command notify-send "Soft press"
+65 [vel=50..99] = command notify-send "Middle press"
+65 [vel=100..127] = command notify-send "Hard press"
+
+# Pedal: values 1-127 activate, value 0 releases
+cc 64 = key 29
+
+# Print a knob's raw MIDI value (0-127)
+cc 75 = command echo "{value}"
+
+# Absolute volume knob: raw MIDI 0-127 maps to 0-127%
+cc 76 = command wpctl set-volume @DEFAULT_SINK@ {value}%
+
+# Screen brightness: MIDI 0-127 scales to 0-100%
+cc 77 = command brightnessctl set {percent}%
+
+# Pitch bend: raw value 0-16383; center is 8192
+pitch = command echo "{value}"
